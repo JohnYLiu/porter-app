@@ -326,6 +326,24 @@ create index if not exists push_subscriptions_user_idx
 
 
 -- ---------------------------------------------------------------------------
+-- app_secrets — values that must reach the database but not the repository.
+--
+-- Currently just the shared secret the notify trigger sends to the Edge
+-- Function. RLS on, zero policies, and revoked from authenticated below: same
+-- treatment as user_codes, for the same reason.
+--
+-- Set it once, from the SQL editor, with the value never entering git:
+--   insert into public.app_secrets (key, value) values ('notify_secret', '…')
+--   on conflict (key) do update set value = excluded.value;
+-- ---------------------------------------------------------------------------
+create table if not exists public.app_secrets (
+  key        text primary key,
+  value      text        not null,
+  updated_at timestamptz not null default now()
+);
+
+
+-- ---------------------------------------------------------------------------
 -- 3b. Migrations for databases created before the two porter areas existed.
 --
 -- `create table if not exists` above defines the shape for a fresh install and
@@ -485,6 +503,7 @@ alter table public.requests         enable row level security;
 alter table public.request_events   enable row level security;
 alter table public.login_attempts   enable row level security;
 alter table public.push_subscriptions enable row level security;
+alter table public.app_secrets        enable row level security;
 
 -- Note on FORCE ROW LEVEL SECURITY: deliberately NOT used on user_codes or
 -- login_attempts. FORCE applies policies to the table owner as well, and the
@@ -944,6 +963,63 @@ language sql security definer set search_path = '' as $$
 $$;
 
 
+-- --- fire a notification when a car is requested ---------------------------
+--
+-- This is the database webhook, written as a trigger rather than clicked
+-- together in the dashboard. Same mechanism — Supabase's own webhooks are
+-- exactly this — but it lives in version control with everything else instead
+-- of being a setting nobody can find again.
+--
+-- pg_net's http_post is asynchronous: it queues the request and returns, so
+-- issuing a car never waits on a push service.
+create extension if not exists pg_net;
+
+create or replace function public.notify_url()
+returns text language sql immutable as $$
+  select 'https://txnijhgfitfklyjativk.supabase.co/functions/v1/notify'
+$$;
+
+-- search_path names only `net` and `extensions` because pg_net lands in one or
+-- the other depending on how the project was set up, and unqualified http_post
+-- should resolve either way. Neither schema is writable by app roles, and
+-- everything else here is fully qualified, so nothing can be shadowed.
+create or replace function public.notify_new_request()
+returns trigger
+language plpgsql security definer set search_path = 'net, extensions'
+as $$
+declare v_secret text;
+begin
+  select value into v_secret from public.app_secrets where key = 'notify_secret';
+
+  -- Not configured yet? Do nothing and let the insert through. A cashier must
+  -- always be able to get a car moved; notifications are an accessory, and a
+  -- missing secret must never be the reason a request cannot be issued.
+  if v_secret is null then
+    return new;
+  end if;
+
+  perform http_post(
+    url     := public.notify_url(),
+    body    := jsonb_build_object('record', to_jsonb(new)),
+    headers := jsonb_build_object(
+                 'Content-Type',    'application/json',
+                 'x-notify-secret', v_secret)
+  );
+  return new;
+exception when others then
+  -- Same reasoning. If the queue call fails for any reason, the car request
+  -- still stands.
+  raise warning 'notify_new_request failed: %', sqlerrm;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_on_request on public.requests;
+create trigger notify_on_request
+  after insert on public.requests
+  for each row execute function public.notify_new_request();
+
+
 -- --- login (service_role only — never callable from a phone) ----------------
 -- Checks a submitted code against every active user's hash. Returns the user id
 -- or null. The Edge Function calls this, applies the lockout counter, and only
@@ -1206,6 +1282,7 @@ alter default privileges in schema public revoke all on tables from anon;
 -- notify functions, which run as service_role.
 revoke all on public.user_codes        from authenticated;
 revoke all on public.login_attempts    from authenticated;
+revoke all on public.app_secrets       from authenticated;
 
 -- Writes to these go through section 6 only.
 revoke insert, update, delete on public.requests       from authenticated;

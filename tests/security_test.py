@@ -54,6 +54,7 @@ TABLES = [
     "request_events",
     "login_attempts",
     "push_subscriptions",
+    "app_secrets",
 ]
 
 # Tables that must be unreachable even by a fully logged-in ordinary user.
