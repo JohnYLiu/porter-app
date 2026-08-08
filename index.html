@@ -1020,13 +1020,30 @@ async function consumeQueueIntent() {
 // Which service worker is actually running. Reported on the sign-in screen so
 // "it does not work" can be told apart from "it has not arrived yet".
 async function serviceWorkerVersion() {
-  const ctrl = navigator.serviceWorker?.controller;
+  if (!("serviceWorker" in navigator)) return null;
+
+  // Wait for a controller rather than checking once. On a first load — and
+  // immediately after an update reload — the page runs before the worker has
+  // claimed it, so an instant check reports "not installed" about a worker that
+  // is perfectly healthy. A diagnostic that lies is worse than none.
+  if (!navigator.serviceWorker.controller) {
+    await navigator.serviceWorker.ready.catch(() => {});
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 3000);
+        navigator.serviceWorker.addEventListener("controllerchange",
+          () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+    }
+  }
+
+  const ctrl = navigator.serviceWorker.controller;
   if (!ctrl) return null;
   return new Promise((resolve) => {
     const ch = new MessageChannel();
     ch.port1.onmessage = (e) => resolve(e.data);
     ctrl.postMessage({ type: "version" }, [ch.port2]);
-    setTimeout(() => resolve(null), 1200);
+    setTimeout(() => resolve(null), 1500);
   });
 }
 
