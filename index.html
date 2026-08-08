@@ -445,13 +445,16 @@ function canClaimZone(zone) {
 
 /* The five locations, in the order cashiers use them. The first four are the
    common ones; wash is the tail. */
+/* Order is John's, by how often each is actually used — not alphabetical and
+   not grouped by area. The picker renders in this order, so changing it here
+   changes it everywhere. */
 const LOCATIONS = [
   { id: "510",       label: "510" },
-  { id: "525",       label: "525" },
-  { id: "express",   label: "Express" },
-  { id: "drive",     label: "Drive" },
-  { id: "wash",      label: "Wash" },
   { id: "lower_lot", label: "Lower Lot" },
+  { id: "drive",     label: "Drive" },
+  { id: "express",   label: "Express" },
+  { id: "525",       label: "525" },
+  { id: "wash",      label: "Wash" },
 ];
 const LOC_LABEL = Object.fromEntries(LOCATIONS.map(l => [l.id, l.label]));
 
