@@ -708,6 +708,93 @@ $$;
 
 
 -- ============================================================================
+-- 6b. Advisor colours
+--
+-- Twelve hues, evenly spaced in OKLCH at fixed lightness and chroma. OKLCH
+-- rather than HSL because HSL is not perceptually even — yellow at "50%
+-- lightness" reads far brighter than blue at the same number, and a hand-picked
+-- set comes out lumpy. These all land between 4.9:1 and 6.1:1 against the page
+-- background, a spread of about one point rather than three.
+--
+-- HONEST LIMIT: twelve colours cannot all be told apart by someone with
+-- red-green colour blindness — roughly one man in twelve. Simulated, two pairs
+-- collapse: #cd632d/#b97600 and #0096c9/#4087de. That is a ceiling, not a bug;
+-- the real limit for a dichromat is about five. It is why the advisor's NAME is
+-- always rendered beside the colour, and why colour must stay a grouping aid
+-- rather than the identifier. Do not "simplify" the card by dropping the name.
+-- ============================================================================
+
+create or replace function public.advisor_palette()
+returns table(ord int, color text)
+language sql immutable as $$
+  select * from (values
+    ( 1, '#d05a69'), ( 2, '#cd632d'), ( 3, '#b97600'), ( 4, '#958900'),
+    ( 5, '#5c9932'), ( 6, '#00a16f'), ( 7, '#00a0a2'), ( 8, '#0096c9'),
+    ( 9, '#4087de'), (10, '#7f76dc'), (11, '#a867c3'), (12, '#c35c9b')
+  ) as t(ord, color);
+$$;
+
+-- The next colour to hand out: the palette entry used by the fewest ACTIVE
+-- advisors, earliest in the palette breaking ties.
+--
+-- Counting only active advisors is what "frees" a colour on removal — deactivate
+-- someone and their colour is immediately available again, with nothing to
+-- unbind by hand. Because it returns the least-used rather than only an unused
+-- one, a thirteenth advisor still gets a colour (shared) instead of an error.
+create or replace function public.next_free_advisor_color()
+returns text
+language sql stable security definer set search_path = '' as $$
+  select p.color
+    from public.advisor_palette() p
+    left join public.service_advisors sa
+           on sa.color = p.color and sa.active
+   group by p.ord, p.color
+   order by count(sa.id), p.ord
+   limit 1;
+$$;
+
+create or replace function public.assign_advisor_color()
+returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  -- Insert with no colour: assign one. Runs BEFORE the NOT NULL check, so
+  -- callers can simply omit the column.
+  if tg_op = 'INSERT' and new.color is null then
+    new.color := public.next_free_advisor_color();
+
+  -- Reactivating someone whose colour was handed to somebody else while they
+  -- were inactive: give them a fresh one rather than a silent duplicate.
+  elsif tg_op = 'UPDATE' and new.active and not old.active
+        and exists (select 1 from public.service_advisors
+                     where active and color = new.color and id <> new.id) then
+    new.color := public.next_free_advisor_color();
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists advisor_color on public.service_advisors;
+create trigger advisor_color
+  before insert or update on public.service_advisors
+  for each row execute function public.assign_advisor_color();
+
+-- Bring any advisor still on a pre-palette colour onto the palette. Idempotent:
+-- once every advisor holds a palette colour this loop finds nothing to do.
+do $$
+declare r record; c text;
+begin
+  for r in select id from public.service_advisors
+            where color not in (select color from public.advisor_palette())
+            order by sort_order, created_at
+  loop
+    select public.next_free_advisor_color() into c;
+    update public.service_advisors set color = c where id = r.id;
+  end loop;
+end $$;
+
+
+-- ============================================================================
 -- 7. Grants
 --
 -- RLS decides which rows; grants decide which tables and functions are
@@ -746,6 +833,11 @@ grant execute on function public.unclaim_request(uuid)                        to
 grant execute on function public.complete_request(uuid)                       to authenticated;
 grant execute on function public.reopen_request(uuid)                         to authenticated;
 grant execute on function public.cancel_request(uuid)                         to authenticated;
+
+-- The admin screen needs to show the palette. It is twelve public hex codes;
+-- nothing is revealed by reading it.
+grant execute on function public.advisor_palette()          to authenticated;
+grant execute on function public.next_free_advisor_color()  to authenticated;
 
 -- The login functions are for the Edge Function alone. If either of these is
 -- ever callable by `anon` or `authenticated`, the six-digit codes are guessable

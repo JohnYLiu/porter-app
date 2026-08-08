@@ -16,9 +16,15 @@
  *
  * Bump CACHE to force old caches out.
  */
-/* Bump this on any change to the shell. Changing this file at all is also what
- * tells the browser a new worker exists, which is half of how updates ship. */
-const CACHE = "porter-v2";
+/* BUMP THIS ON EVERY DEPLOY. Not just when this file changes — every deploy.
+ *
+ * A browser only looks for a new service worker by fetching THIS file and
+ * comparing bytes. Ship a change to index.html alone and this file is
+ * identical, so no update is detected, so the installed app on someone's Home
+ * Screen never reloads and keeps running the old code indefinitely. Editing
+ * this line is what makes the update mechanism in index.html fire at all.
+ */
+const CACHE = "porter-v3";
 
 const SHELL = [
   "./",

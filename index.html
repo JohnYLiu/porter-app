@@ -40,7 +40,8 @@
   --silver:    #e8eaed;
   --danger:    #f0656f;
   --ok:        #4ade80;
-  --warn:      #fbbf24;
+  --warn:      #fbbf24;   /* Express */
+  --drive:     #7ab8f5;   /* Drive — deliberately the same visual weight as --warn */
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
 }
@@ -174,10 +175,15 @@ h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spac
 .card .age { margin-left: auto; color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
 .card .row2 { display: flex; align-items: center; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
 
+/* Drive and Express carry equal urgency — the queue is strictly oldest-first
+   and neither jumps it. Gold against plain grey read as "Express matters more",
+   which is a claim the app should not be making. Two saturated colours of
+   similar weight say "different", not "more important". */
 .badge-dest {
   font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim);
 }
+.badge-dest.drive   { border-color: #2f4c70; color: var(--drive); }
 .badge-dest.express { border-color: #4a4034; color: var(--warn); }
 
 /* The advisor's colour NEVER travels alone — the name rides with it every
@@ -254,9 +260,22 @@ textarea { min-height: 84px; resize: vertical; }
   border-radius: 20px 20px 0 0;
   padding: 8px 18px calc(24px + env(safe-area-inset-bottom));
   animation: rise .22s ease-out;
+  /* Stops iOS rubber-banding the page behind the sheet while dragging it. */
+  overscroll-behavior: contain;
 }
 @keyframes rise { from { transform: translateY(16px); opacity: .4 } }
-.grip { width: 38px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 16px; }
+
+/* The grip is a promise that the sheet can be dragged down. It has to be one
+   the app keeps — see the touch handlers below. A control that looks draggable
+   and isn't is worse than no control. */
+.grip {
+  width: 38px; height: 5px; border-radius: 3px; background: var(--line);
+  margin: 6px auto 16px; cursor: grab;
+}
+/* Widen the target well past the visible bar: a thumb reaching the top of a
+   sheet one-handed is not precise, and 5px is nothing. */
+.grip::before { content: ""; position: absolute; left: 0; right: 0;
+                margin-top: -14px; height: 34px; }
 .detail-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: 2.3rem; font-weight: 650; letter-spacing: .05em; }
 .kv { display: flex; justify-content: space-between; gap: 16px;
@@ -757,11 +776,73 @@ function openDetail(id, inline = false) {
   renderDetail();
 }
 
+function resetSheetPosition() {
+  const body = $("sheetBody");
+  body.style.transition = "";
+  body.style.transform = "";
+  $("sheet").style.background = "";
+}
+
 function closeSheet() {
   $("sheet").hidden = true;
+  resetSheetPosition();          // or the next sheet opens already dragged down
   sheetId = null; sheetInline = false;
   render();
 }
+
+/* Drag the sheet down to dismiss it.
+ *
+ * Only starts when the content is already scrolled to the top, so dragging and
+ * scrolling never fight each other — otherwise a porter trying to scroll a long
+ * request would keep flinging the sheet shut.
+ *
+ * Closes on distance OR speed: a slow deliberate pull most of the way down, or
+ * a quick flick that never travels far. Requiring distance alone makes a flick
+ * feel broken.
+ */
+(function dragToDismiss() {
+  const sheet = $("sheet"), body = $("sheetBody");
+  let startY = 0, startedAt = 0, dragging = false, delta = 0;
+
+  const CLOSE_DISTANCE = 110;    // px
+  const CLOSE_VELOCITY = 0.45;   // px per ms
+
+  body.addEventListener("touchstart", (e) => {
+    if (body.scrollTop > 0 || e.touches.length !== 1) return;
+    startY = e.touches[0].clientY;
+    startedAt = Date.now();
+    dragging = true; delta = 0;
+    body.style.transition = "none";
+  }, { passive: true });
+
+  body.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    delta = e.touches[0].clientY - startY;
+    if (delta <= 0) { body.style.transform = ""; return; }   // upward: ignore
+    e.preventDefault();                                       // needs passive:false
+    body.style.transform = `translateY(${delta}px)`;
+    sheet.style.background = `rgba(0,0,0,${(0.65 * Math.max(0, 1 - delta / 420)).toFixed(3)})`;
+  }, { passive: false });
+
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    const velocity = delta / Math.max(1, Date.now() - startedAt);
+    body.style.transition = "transform .2s ease-out";
+
+    if (delta > CLOSE_DISTANCE || velocity > CLOSE_VELOCITY) {
+      body.style.transform = "translateY(100%)";
+      sheet.style.background = "rgba(0,0,0,0)";
+      setTimeout(closeSheet, 190);
+    } else {
+      body.style.transform = "";        // snap back
+      sheet.style.background = "";
+    }
+  };
+
+  body.addEventListener("touchend", end);
+  body.addEventListener("touchcancel", end);
+})();
 
 function renderDetail(message = "") {
   const r = requests.find(x => x.id === sheetId);

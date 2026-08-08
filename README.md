@@ -122,6 +122,31 @@ not a formality** — a failure means data is reachable by someone who should no
 Results get recorded in `SECURITY-TESTS.md` so there's a record of what was checked
 rather than a memory of having looked.
 
+## Deploying a change
+
+Push to `main` and Pages rebuilds in about a minute. **Bump `CACHE` in
+[`sw.js`](sw.js) as part of every deploy**, even one that doesn't touch that file.
+
+Browsers detect a new service worker by fetching `sw.js` and comparing bytes. If it
+is byte-identical, no update is found, and an app already on someone's Home Screen
+never reloads — iOS restores a backgrounded web app rather than re-navigating it, so
+a porter can run last week's code with no symptom. Editing that line is the whole
+trigger.
+
+## Advisor colours
+
+Twelve hues, evenly spaced in OKLCH, defined in `advisor_palette()` in
+[`db/schema.sql`](db/schema.sql). Adding an advisor with no colour assigns the
+palette entry used by the fewest **active** advisors — so deactivating someone frees
+their colour immediately, with nothing to unbind by hand. A thirteenth advisor gets a
+shared colour rather than an error.
+
+Twelve colours cannot all be distinguished by someone with red-green colour blindness
+— about one man in twelve. Two pairs collapse under simulation. That is a ceiling,
+not a defect: the real limit for a dichromat is around five. It is why the advisor's
+**name is always rendered beside the colour**, and why colour must remain a grouping
+aid rather than the identifier. Don't drop the name to tidy the card.
+
 ## Things to change before real use
 
 - **`app_timezone()` in `db/schema.sql`** is set to `America/Los_Angeles`. It decides when
