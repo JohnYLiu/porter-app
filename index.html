@@ -2597,6 +2597,10 @@ if ("serviceWorker" in navigator) {
 /* iOS does not reliably fire visibilitychange when an installed app is resumed
    — sometimes it is pageshow, sometimes only focus. Listening for all three
    costs nothing and is the difference between the queue appearing and not. */
+// Set once the worker registers, below. Held here so the foreground handler can
+// ask it for an update check.
+let swReg = null;
+
 function onForeground() {
   // NOT guarded on document.hidden. That guard exists to avoid polling while
   // the app is in the background — it has no business gating the intent check.
@@ -2609,6 +2613,13 @@ function onForeground() {
 
   // The poll, however, genuinely should not run while hidden.
   if (!document.hidden && session) refresh();
+
+  // And check for new code, on all three events for the same reason the intent
+  // check is on all three: an installed iOS app resumed from the app switcher
+  // does not reliably fire visibilitychange. This used to be registered on that
+  // event alone, so a phone could sit on old code indefinitely — it never asked
+  // whether there was anything newer.
+  if (swReg) swReg.update().catch(() => {});
 }
 document.addEventListener("visibilitychange", onForeground);
 window.addEventListener("pageshow", onForeground);
@@ -2649,11 +2660,17 @@ if (session) start().catch(() => signOut()); else $("login").hidden = false;
 if ("serviceWorker" in navigator) {
   let reloading = false;
 
-  navigator.serviceWorker.register("sw.js").then(reg => {
+  // updateViaCache: "none" — check sw.js against the NETWORK, never against
+  // Safari's own http cache.
+  //
+  // GitHub Pages serves this file with max-age=600. The spec says the default
+  // ("imports") already bypasses the cache for the top-level worker script, but
+  // relying on that is how the app shipped stale code to phones once before —
+  // the fetch handler in sw.js carries a `cache: "reload"` for the identical
+  // reason. An update check that can be answered from a cache is not a check.
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
+    swReg = reg;
     reg.update();
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) reg.update();
-    });
 
     reg.addEventListener("updatefound", () => {
       const incoming = reg.installing;
