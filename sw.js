@@ -24,7 +24,7 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v23";
+const CACHE = "porter-v24";
 
 const SHELL = [
   "./",
@@ -60,13 +60,19 @@ self.addEventListener("activate", (e) => {
  * here on purpose.
  */
 self.addEventListener("push", (e) => {
+  // NO `tag`. A shared tag makes each push REPLACE the last one, and iOS
+  // honours `renotify` inconsistently — so the first car buzzed and every one
+  // after it silently overwrote the notification with no sound. Exactly the
+  // failure this app exists to prevent.
+  //
+  // Untagged, each request is its own line: five cars waiting look like five
+  // cars waiting, which is the whole point of a queue.
   e.waitUntil(
     self.registration.showNotification("New car request", {
       body: "Tap to see the queue.",
       icon: "./icon-192.png",
       badge: "./icon-192.png",
-      tag: "porter-request",     // collapses a burst into one line, not five
-      renotify: true,            // ...but still buzzes for each one
+      timestamp: Date.now(),
     })
   );
 });
