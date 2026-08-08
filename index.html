@@ -154,6 +154,34 @@ nav .badge {
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
 
+/* Ask for the TEXT glyph, twice over. U+FE0E after the character is the
+   standard request; font-variant-emoji is the newer CSS spelling of the same
+   thing. Only the gear needs it — it is the one icon in the bar that a phone
+   would otherwise draw as a colour emoji, which made it the odd one out. */
+nav button .ico { font-variant-emoji: text; }
+
+/* --- Swipe left to act ------------------------------------------------------
+   Touch only. A porter walking between bays has one hand free, and a swipe is
+   easier to land than a button. Tapping still does everything it did. */
+.swipe-wrap {
+  position: relative; overflow: hidden;
+  border-radius: var(--radius); margin-bottom: 11px;
+}
+.swipe-wrap > .card, .swipe-wrap > .mycar { margin-bottom: 0; position: relative; }
+/* The wrapper inherits the spacing its child used to own, or the layout shifts
+   by 3px the moment a car is claimed. */
+.swipe-wrap[data-swipe="complete"] { margin-bottom: 14px; }
+.swipe-action {
+  position: absolute; inset: 0; opacity: 0;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 16px; border-radius: var(--radius);
+  background: #14301f; color: var(--ok);
+  font-size: .8rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+}
+/* Past the commit threshold. Worth being obvious about: releasing here acts,
+   releasing before it does nothing. */
+.swipe-action.armed { background: #1d5c37; color: #fff; }
+
 /* --- The car you are holding ----------------------------------------------
    Deliberately much larger than a queue card. This is the one thing a porter
    mid-delivery needs on screen, so it takes the top of the Queue rather than
@@ -1102,7 +1130,7 @@ function tabsFor() {
   t.push({ id: "progress", label: "Active", ico: "◷" });
   if (canIssue()) t.push({ id: "issue", label: "Issue", ico: "＋" });
   t.push({ id: "history", label: "History", ico: "⟲" });
-  t.push({ id: "settings", label: "Settings", ico: "⚙" });
+  t.push({ id: "settings", label: "Settings", ico: "\u2699\uFE0E" });
   return t;
 }
 
@@ -1161,6 +1189,14 @@ function card(r, opts = {}) {
     </button>`;
 }
 
+/* Wraps something swipeable so there is an action sitting behind it.
+   The wrapper clips, the child slides, and the label underneath is revealed —
+   no extra DOM anywhere it isn't used, because only the Queue swipes. */
+function swipeWrap(inner, label, action) {
+  return `<div class="swipe-wrap" data-swipe="${action}">
+            <div class="swipe-action">${esc(label)}</div>${inner}</div>`;
+}
+
 /* The area sub-tabs above the Queue and In Progress lists.
    Drawn only when there is a choice to make — a porter who works one area gets
    no switcher, because there is nothing to switch to. */
@@ -1214,7 +1250,7 @@ function myCarPanels(mine) {
 
   return `<h2 class="title">${esc(heading)}</h2>` + mine.map(r => {
     const adv = advisorOf(r);
-    return `
+    return swipeWrap(`
       <div class="mycar" style="--advisor:${esc(adv.color)}">
         <div class="top1">
           <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
@@ -1229,7 +1265,7 @@ function myCarPanels(mine) {
           ${esc(ago(r.created_at))}</div>
         <button class="btn primary" data-car="${r.id}" data-do="complete">Mark delivered</button>
         <button class="btn" data-car="${r.id}" data-do="unclaim">Release it — I claimed this by mistake</button>
-      </div>`;
+      </div>`, "Delivered", "complete");
   }).join("");
 }
 
@@ -1249,6 +1285,146 @@ function bindMyCarPanels() {
       await loadRequests();
       render();
     });
+}
+
+/* --- Swipe left to act ------------------------------------------------------
+ *
+ * A porter has a key tag in one hand. Reaching a card, waiting for the sheet,
+ * finding the button and tapping it is four deliberate acts for the two things
+ * they do all day: take the next car, and say it arrived. One swipe does either.
+ *
+ * Touch only — these listeners fire on nothing else, so the desktop UI is
+ * untouched and every button still works exactly as before.
+ *
+ * The rules, learned from dragToDismiss above:
+ *   - Decide direction ONCE, from the first few pixels, and never take over a
+ *     gesture that turned out to be a scroll. A queue you cannot scroll past is
+ *     worse than no swipe at all.
+ *   - Commit on distance OR speed, so a short flick works as well as a long pull.
+ *   - Only leftward. Rightward does nothing, deliberately: there is no second
+ *     action to discover, and a card that slides both ways invites hunting.
+ */
+let swipeActive = false;        // suppresses the 3s poll mid-gesture
+
+function bindSwipes() {
+  $("view").querySelectorAll(".swipe-wrap").forEach(wrap => {
+    const el = wrap.querySelector(".card, .mycar");
+    if (!el) return;
+    const action = wrap.dataset.swipe;
+    const label  = wrap.querySelector(".swipe-action");
+
+    const COMMIT_DISTANCE = 96;     // px, for a slow deliberate pull
+    const COMMIT_VELOCITY = 0.6;    // px per ms, for a quick flick
+    const MIN_FLICK       = 48;     // px a flick must still travel
+    const SLOP            = 10;     // px before the direction is decided
+
+    let x0 = 0, y0 = 0, at = 0, dx = 0;
+    let tracking = false, decided = false, swiped = false;
+
+    const paint = () => {
+      el.style.transform = `translateX(${dx}px)`;
+      const p = Math.min(1, Math.abs(dx) / COMMIT_DISTANCE);
+      label.style.opacity = p.toFixed(2);
+      label.classList.toggle("armed", Math.abs(dx) >= COMMIT_DISTANCE);
+    };
+
+    const settle = () => {
+      el.style.transition = "transform .18s ease-out";
+      el.style.transform = "";
+      label.style.opacity = 0;
+      label.classList.remove("armed");
+    };
+
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+      at = Date.now(); dx = 0;
+      tracking = true; decided = false; swiped = false;
+      el.style.transition = "none";
+    }, { passive: true });
+
+    el.addEventListener("touchmove", (e) => {
+      if (!tracking) return;
+      const ddx = e.touches[0].clientX - x0;
+      const ddy = e.touches[0].clientY - y0;
+
+      // Hold off until the finger has committed to a direction. Guessing from
+      // the first pixel steals vertical scrolls; every list here is scrollable.
+      if (!decided) {
+        if (Math.abs(ddx) < SLOP && Math.abs(ddy) < SLOP) return;
+        decided = true;
+        if (Math.abs(ddx) <= Math.abs(ddy)) { tracking = false; return; }  // it's a scroll
+        swipeActive = true;
+      }
+
+      if (ddx >= 0) { dx = 0; paint(); return; }   // rightward: nothing to show
+      dx = ddx;
+      e.preventDefault();      // needs passive:false — stops the page rubber-banding
+      paint();
+    }, { passive: false });
+
+    const end = () => {
+      // Cleared before the early return, never after. This flag stops the
+      // poller, and a flag that stops the poller must have no path that leaves
+      // it set — the History filters froze that way once already.
+      swipeActive = false;
+      if (!tracking) return;
+      tracking = false;
+      if (!dx) { settle(); return; }
+
+      // Distance OR speed, but speed still has to go somewhere. Velocity alone
+      // let a 20px twitch claim a car, because a short fast movement is a high
+      // velocity — and a twitch is exactly what a phone in a pocket produces.
+      const velocity = -dx / Math.max(1, Date.now() - at);
+      if (-dx >= COMMIT_DISTANCE || (-dx >= MIN_FLICK && velocity >= COMMIT_VELOCITY)) {
+        swiped = true;                          // and so the tap that follows is not a tap
+        el.style.transition = "transform .18s ease-out";
+        el.style.transform = "translateX(-100%)";
+        label.style.opacity = 1;
+        label.classList.add("armed");
+        swipeAct(action, el.dataset.id || el.querySelector("[data-car]")?.dataset.car);
+      } else {
+        settle();
+      }
+    };
+
+    el.addEventListener("touchend", end);
+    el.addEventListener("touchcancel", end);
+
+    // A finished swipe still ends in a touchend over the card, which the browser
+    // turns into a click — opening the detail sheet for the car just claimed.
+    // Capture phase, so it never reaches the card's own handler or a button
+    // inside the panel.
+    el.addEventListener("click", (e) => {
+      if (!swiped) return;
+      swiped = false;
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+  });
+}
+
+async function swipeAct(action, id) {
+  const r = requests.find(x => x.id === id);
+  if (!r) return;
+
+  // Same question the sheet asks, for the same reason: holding a car and
+  // swiping another is usually a mis-swipe, occasionally deliberate.
+  if (action === "claim") {
+    const held = myClaims();
+    if (held.length && !confirm(
+        `You already have ${held.map(x => x.car_code).join(", ")} claimed.\n\n` +
+        `Claim ${r.car_code} as well?`)) { render(); return; }
+  }
+
+  try {
+    await api(`/rest/v1/rpc/${action}_request`, { method: "POST", body: { p_id: r.id } });
+  } catch (e) {
+    // 409 means somebody else claimed it first. Not an error — the queue
+    // working. Either way the card comes back, so say why it did.
+    alert(e.message);
+  }
+  await loadRequests();
+  render();
 }
 
 function empty(icon, title, sub = "") {
@@ -1276,11 +1452,13 @@ function render() {
       myCarPanels(mine) +
       `<h2 class="title">Unclaimed</h2>` + pushCard() + zoneBar(counts) +
       (open.length
-        ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` + open.map(r => card(r)).join("")
+        ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` +
+          open.map(r => canClaim() ? swipeWrap(card(r), "Claim", "claim") : card(r)).join("")
         : empty("✓", "Nothing waiting", "Every car in this area has been picked up."));
 
     bindZoneBar();
     bindMyCarPanels();
+    bindSwipes();
     if ($("enablePush")) $("enablePush").onclick = enablePush;
   }
 
@@ -2354,6 +2532,10 @@ async function refresh() {
   const inUse = busy && /^(INPUT|SELECT|TEXTAREA)$/.test(busy.tagName)
                 && Date.now() - lastFieldTouch < FIELD_GRACE_MS;
   if (inUse) { renderTabs(); return; }
+
+  // Mid-swipe. Re-rendering would replace the element the finger is holding,
+  // which drops the gesture and leaves the card stuck halfway across.
+  if (swipeActive) { renderTabs(); return; }
 
   render();
 }
