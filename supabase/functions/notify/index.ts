@@ -87,8 +87,17 @@ Deno.serve(async (req) => {
   let zone = "";
   try {
     const body = await req.json();
-    // Database Webhooks post { type, table, record, old_record }.
-    zone = String(body?.record?.zone ?? body?.zone ?? "");
+    // Database Webhooks post { type, table, schema, record, old_record }.
+    const row = body?.record ?? body ?? {};
+    zone = String(row.zone ?? "");
+
+    // `zone` is a generated column, so it should be in the row — but if the
+    // webhook ever ships without it, recomputing from the two locations is the
+    // same rule and beats dropping the notification on the floor.
+    if (!zone && (row.origin || row.destination)) {
+      zone = ["510", "525"].includes(row.origin) ||
+             ["510", "525"].includes(row.destination) ? "510" : "lower_lot";
+    }
   } catch {
     return new Response("Bad request", { status: 400 });
   }
