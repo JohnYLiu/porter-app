@@ -121,10 +121,23 @@ button { cursor: pointer; border: none; background: none; }
 #version { color: var(--dimmer); font-size: .68rem; margin: 20px 0 0; letter-spacing: .08em; }
 
 /* --- Shell ---------------------------------------------------------------- */
-#app { min-height: 100%; display: flex; flex-direction: column; }
+/* An app shell locked to the viewport, rather than a document that happens to
+   be about a screen tall.
+ *
+ * Two goes at this failed while the tab bar was part of a scrolling document.
+ * Sticky tied it to the document's height; fixed took it off the document but
+ * left it exposed to iOS moving fixed elements about — and on a standalone
+ * Home Screen app, a page that cannot scroll still rubber-bands when you drag
+ * it, which drags a fixed bar with it. Both failures only showed on the tabs
+ * whose content does not fill the screen, which is what the report described.
+ *
+ * inset:0 makes this box the viewport, exactly, always. main scrolls inside
+ * it; the bar is simply the last row of it and cannot go anywhere. There is no
+ * document scroll left to be wrong about. */
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
 
 header {
-  position: sticky; top: 0; z-index: 20;
+  flex: none; position: relative; z-index: 20;
   display: flex; align-items: center; gap: 10px;
   padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
   background: rgba(12,13,15,.92); backdrop-filter: blur(12px);
@@ -138,27 +151,20 @@ header button {
   background: var(--surface-2); color: var(--dim); font-size: .85rem;
 }
 
-/* The bar no longer occupies any space, so this is what keeps the last card
-   clear of it — the bar's own measured height, plus room for the half-circle
-   standing above it. --nav-h is measured off the real element in
-   setNavHeight(), because the height depends on the device's safe-area inset. */
-main { flex: 1; padding: 16px 16px calc(var(--nav-h, 98px) + 58px); }
+/* The scroller. Not the document — this element. The bar sits below it as a
+   sibling, so nothing here can push the bar around however long a tab gets.
+   The bottom padding clears the half-circle, which overhangs this box. */
+main {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px 58px;
+}
 
-/* FIXED, not sticky, and that is the bug fix.
- *
- * Sticky ties the bar to the document: it only pins to the bottom of the
- * screen while the document is long enough to scroll, and otherwise it just
- * sits at the end of the content. So on the tabs whose content does not fill
- * the screen — Queue, Active, Settings — the bar was landing wherever the app
- * box happened to end rather than on the bottom of the display, riding up and
- * taking its half-circle with it. The tabs that scroll, Issue and History,
- * looked right, because there the pinning actually engaged.
- *
- * Fixed takes the document out of it entirely. The bar is on the bottom of the
- * screen because that is where it is told to be, whatever the tab contains.
- */
+/* The last row of the shell. Not sticky, not fixed — neither survived contact
+   with a standalone iOS app. It is positioned only so the half-circle, which
+   overhangs main, paints above it. */
 nav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  position: relative; flex: none; z-index: 20;
   display: flex; gap: 2px;
   padding: 6px 6px calc(6px + var(--safe-bottom));
   background: var(--navbg);
@@ -265,6 +271,12 @@ nav.herobar .hero .badge {
   position: fixed; left: 0; bottom: 0; width: 0;
   height: env(safe-area-inset-bottom, 0px);
   visibility: hidden; pointer-events: none;
+}
+
+.diag {
+  margin: 26px 0 0; color: var(--dimmer);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .66rem; line-height: 1.7; word-break: break-word;
 }
 
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
@@ -1285,23 +1297,6 @@ function renderTabs() {
   nav.querySelectorAll("button").forEach(b =>
     b.onclick = () => { tab = b.dataset.tab; render(); });
 
-  setNavHeight();
-}
-
-/* Tell main how much room the fixed bar needs, measured off the bar itself.
-   Not a constant: the height depends on the safe-area inset, which is 34px on
-   a phone with a home indicator and 0 on one without.
-
-   Called from renderTabs rather than watched with a ResizeObserver — an
-   observer held by nothing is free to be collected before it ever reports, and
-   that is exactly what happened: main sat on its fallback padding. Here it runs
-   immediately after the markup that decides the height, which is the only
-   moment it can change. */
-function setNavHeight() {
-  const h = $("tabs").offsetHeight;
-  // Zero while the app is still hidden behind the sign-in screen. Writing that
-  // would collapse main's padding until the next render.
-  if (h > 0) document.documentElement.style.setProperty("--nav-h", h + "px");
 }
 
 // One flat tab. Used as-is by the cashier bar, and for everything either side
@@ -1836,6 +1831,32 @@ async function submitRequest() {
    line rather than a rethink. */
 let settingsSection = "notifications";
 
+/* Numbers off the device, because this one only misbehaves on a phone.
+ *
+ * Two attempts at the jumping tab bar were wrong, and both were wrong because
+ * every measurement I had came from a desktop browser that does not reproduce
+ * it. This puts the same measurements on the screen of the machine that does.
+ * It sits on Settings deliberately — that is one of the tabs that misbehaves.
+ * Delete the line and this function once the bar is behaving. */
+function viewportReadout() {
+  const vv = window.visualViewport;
+  const bar = $("tabs").getBoundingClientRect();
+  const app = $("app").getBoundingClientRect();
+  const safe = $("safeProbe") ? $("safeProbe").getBoundingClientRect().height : -1;
+  const n = v => Math.round(v);
+  return [
+    `win ${n(innerWidth)}x${n(innerHeight)}`,
+    `vv ${vv ? n(vv.height) + "@" + n(vv.offsetTop) : "-"}`,
+    `cl ${n(document.documentElement.clientHeight)}`,
+    `app ${n(app.top)}..${n(app.bottom)}`,
+    `bar ${n(bar.top)}..${n(bar.bottom)} h${n(bar.height)}`,
+    `safe ${n(safe)}`,
+    `doc ${n(document.documentElement.scrollHeight)}`,
+    (matchMedia("(display-mode: standalone)").matches || navigator.standalone)
+      ? "standalone" : "browser",
+  ].join(" · ");
+}
+
 function renderSettings() {
   const u = session.user;
   const row = (key, label, note) => `
@@ -1860,7 +1881,8 @@ function renderSettings() {
       ${row("notify_510", "510 Car Requests", "A car is waiting in the 510 area")}
       ${row("notify_delivered", "My Car Delivered", "A car you requested has arrived")}
     </div>
-    <div id="prefMsg"></div>`;
+    <div id="prefMsg"></div>
+    <p class="diag">${esc(viewportReadout())}</p>`;
 
   if ($("enablePush")) $("enablePush").onclick = enablePush;
 
@@ -2867,8 +2889,6 @@ serviceWorkerVersion().then(async (v) => {
     setTimeout(read, 350);        // once the rotation has settled
   });
 })();
-
-addEventListener("resize", setNavHeight);
 
 loadSession();
 if (session) start().catch(() => signOut()); else $("login").hidden = false;
