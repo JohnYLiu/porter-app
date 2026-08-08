@@ -183,9 +183,20 @@ Deno.serve(async (req) => {
     return json({ error: "Could not start your session" }, 500);
   }
 
-  await admin.from("login_attempts").insert({
+  // This row is not just an audit trail — push_targets() uses "signed in since
+  // the last 3am" to decide who is on shift and therefore who gets notified.
+  // If this insert fails, logging in still works perfectly and notifications
+  // quietly stop for everyone, with nothing anywhere to say why. So its result
+  // is checked and shouted about, even though it must never block a login.
+  const { error: attemptErr } = await admin.from("login_attempts").insert({
     ip, code_fingerprint: fp, succeeded: true, user_id: userId,
   });
+  if (attemptErr) {
+    console.error(
+      "COULD NOT RECORD LOGIN for", userId, ":", attemptErr.message,
+      "— notifications will not reach this person until this is fixed.",
+    );
+  }
 
   // The profile comes back with the session so the app knows which tabs to draw
   // on first paint. It is a convenience, not a permission: the tabs a user sees
