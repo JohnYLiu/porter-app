@@ -826,6 +826,115 @@ async function checkSelf() {
   return "ok";
 }
 
+/* ===========================================================================
+   Push notifications
+   ---------------------------------------------------------------------------
+   iOS will only do this for an app on the Home Screen — not a Safari tab, on
+   any version — and the permission prompt must come from a tap. So this is a
+   card the porter presses, never something that happens at startup.
+=========================================================================== */
+const VAPID_PUBLIC =
+  "BAILS8UFrR9WZXmQB0O4tl_dnEvQl52mQt7muNsA7CurRpifK5QcJVolnd7O3lwwFVphvGhFRbq7yAb0eFB9uHM";
+
+let pushOn = false;   // does THIS device have a live subscription saved
+
+const pushSupported = () =>
+  "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+// iOS reports standalone through a non-standard property; everything else uses
+// the display-mode media query.
+const isInstalled = () =>
+  window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+
+function urlB64ToBytes(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function existingSubscription() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return await reg.pushManager.getSubscription();
+  } catch { return null; }
+}
+
+/* Make sure this device's subscription belongs to whoever is signed in now.
+ *
+ * Phones get shared. If the previous person's subscription is still attached to
+ * the browser, the new person's cars would buzz a device registered to somebody
+ * else — and RLS rightly will not let them edit a row they do not own. Simplest
+ * correct fix: throw the old subscription away and make a fresh one, which
+ * yields a new endpoint the current user can register. The orphaned row is
+ * pruned by the notify function the first time the dead endpoint returns 410. */
+async function syncPush() {
+  pushOn = false;
+  if (!pushSupported() || !session?.user) return;
+
+  const sub = await existingSubscription();
+  if (!sub) return;
+
+  let mine = [];
+  try {
+    mine = await api("/rest/v1/push_subscriptions?select=endpoint&endpoint=eq." +
+                     encodeURIComponent(sub.endpoint));
+  } catch { return; }
+
+  if (Array.isArray(mine) && mine.length) { pushOn = true; return; }
+
+  try { await sub.unsubscribe(); } catch { /* already gone */ }
+  await subscribePush().catch(() => {});
+}
+
+async function subscribePush() {
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,                        // iOS requires it; we honour it
+    applicationServerKey: urlB64ToBytes(VAPID_PUBLIC),
+  });
+  await api("/rest/v1/push_subscriptions", {
+    method: "POST",
+    body: { user_id: session.user.id, endpoint: sub.endpoint },
+  });
+  pushOn = true;
+}
+
+function pushCard() {
+  if (!canClaim() || pushOn || !pushSupported()) return "";
+
+  // On iOS this is not a preference, it is a precondition. Saying so beats a
+  // permission prompt that silently never appears.
+  if (!isInstalled()) {
+    return `<div class="msg info" style="margin-bottom:14px">
+      <b>Get alerted about new cars</b><br>
+      Add this to your Home Screen first — tap Share, then "Add to Home Screen",
+      and open it from the icon. Notifications cannot work in a browser tab.
+    </div>`;
+  }
+  if (Notification.permission === "denied") {
+    return `<div class="msg err" style="margin-bottom:14px">
+      Notifications are blocked for this app. Turn them back on in
+      Settings → Notifications → Porter.
+    </div>`;
+  }
+  return `<button class="btn" id="enablePush" style="margin:0 0 14px">
+            Turn on notifications for new cars
+          </button>`;
+}
+
+async function enablePush() {
+  const btn = $("enablePush");
+  if (btn) { btn.disabled = true; btn.textContent = "Asking…"; }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") { render(); return; }
+    await subscribePush();
+  } catch (e) {
+    alert("Could not turn on notifications: " + e.message);
+  }
+  render();
+}
+
 const byStatus = (s) => requests.filter(r => r.status === s);
 const myClaims = () => requests.filter(r => r.status === "claimed" && r.claimed_by === session.user.id);
 
@@ -939,11 +1048,12 @@ function render() {
     const all = byStatus("unclaimed");
     const counts = Object.fromEntries(ZONES.map(z => [z.id, all.filter(r => r.zone === z.id).length]));
     const open = inZone(all);
-    v.innerHTML = `<h2 class="title">Unclaimed</h2>` + zoneBar(counts) +
+    v.innerHTML = `<h2 class="title">Unclaimed</h2>` + pushCard() + zoneBar(counts) +
       (open.length
         ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` + open.map(r => card(r)).join("")
         : empty("✓", "Nothing waiting", "Every car in this area has been picked up."));
     bindZoneBar();
+    if ($("enablePush")) $("enablePush").onclick = enablePush;
   }
 
   else if (tab === "mycar") {
@@ -1963,6 +2073,7 @@ async function start() {
   await loadAdvisors();
   await loadRequests();
   render();
+  syncPush().then(render).catch(() => {});   // never blocks the queue appearing
 
   clearInterval(poller);
   poller = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);

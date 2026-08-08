@@ -24,7 +24,7 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v22";
+const CACHE = "porter-v23";
 
 const SHELL = [
   "./",
@@ -46,6 +46,41 @@ self.addEventListener("activate", (e) => {
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+/* --- Push -----------------------------------------------------------------
+ *
+ * Messages arrive with NO BODY. A body would have to be encrypted with this
+ * device's own keys, and there is nothing worth saying in it: routing already
+ * decided that this person hears about this car, so "there is one" is the whole
+ * message. Nothing sensitive lands on a lock screen either.
+ *
+ * iOS requires a visible notification for every push received. Showing nothing
+ * — even briefly — gets the subscription revoked, so there is no silent path
+ * here on purpose.
+ */
+self.addEventListener("push", (e) => {
+  e.waitUntil(
+    self.registration.showNotification("New car request", {
+      body: "Tap to see the queue.",
+      icon: "./icon-192.png",
+      badge: "./icon-192.png",
+      tag: "porter-request",     // collapses a burst into one line, not five
+      renotify: true,            // ...but still buzzes for each one
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  // Focus the app if it is already open rather than opening a second copy.
+  e.waitUntil((async () => {
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of clients) {
+      if (c.url.includes(self.location.origin)) return c.focus();
+    }
+    return self.clients.openWindow("./");
+  })());
 });
 
 self.addEventListener("fetch", (e) => {

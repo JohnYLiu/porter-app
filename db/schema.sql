@@ -304,6 +304,28 @@ create index if not exists login_attempts_fingerprint_idx
 
 
 -- ---------------------------------------------------------------------------
+-- push_subscriptions — one row per device that has agreed to be notified.
+--
+-- Only the endpoint is stored. Push messages are sent with NO BODY: a body must
+-- be encrypted with the subscriber's own keys, and since routing already decides
+-- who hears about a car, the message itself has nothing to say beyond "there is
+-- one". Nothing sensitive travels, and nothing appears on a lock screen.
+--
+-- Endpoint is unique: subscribing twice on the same phone must not double the
+-- buzzes.
+-- ---------------------------------------------------------------------------
+create table if not exists public.push_subscriptions (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid        not null references public.users(id) on delete cascade,
+  endpoint   text        not null unique,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists push_subscriptions_user_idx
+  on public.push_subscriptions (user_id);
+
+
+-- ---------------------------------------------------------------------------
 -- 3b. Migrations for databases created before the two porter areas existed.
 --
 -- `create table if not exists` above defines the shape for a fresh install and
@@ -462,6 +484,7 @@ alter table public.service_advisors enable row level security;
 alter table public.requests         enable row level security;
 alter table public.request_events   enable row level security;
 alter table public.login_attempts   enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 -- Note on FORCE ROW LEVEL SECURITY: deliberately NOT used on user_codes or
 -- login_attempts. FORCE applies policies to the table owner as well, and the
@@ -476,6 +499,7 @@ drop policy if exists advisors_select     on public.service_advisors;
 drop policy if exists advisors_admin_all  on public.service_advisors;
 drop policy if exists requests_select     on public.requests;
 drop policy if exists events_select       on public.request_events;
+drop policy if exists push_own             on public.push_subscriptions;
 
 -- --- users -----------------------------------------------------------------
 -- Any active, logged-in user reads the whole table: names are needed all over
@@ -523,6 +547,15 @@ create policy events_select on public.request_events
 
 -- --- login_attempts --------------------------------------------------------
 -- No policies, on purpose.
+
+-- --- push_subscriptions ----------------------------------------------------
+-- A device may register and remove ITSELF, and see whether it is registered.
+-- Nobody can read anybody else's: the list of endpoints is what a sender would
+-- need, and it belongs only to the notify function.
+create policy push_own on public.push_subscriptions
+  for all to authenticated
+  using (user_id = auth.uid() and public.app_is_active())
+  with check (user_id = auth.uid() and public.app_is_active());
 
 
 -- ============================================================================
@@ -872,6 +905,45 @@ end;
 $$;
 
 
+-- --- who to notify about a new car -----------------------------------------
+--
+-- THIS IS WHAT THE AREA LABELS ARE FOR. They grant nothing — anyone can claim
+-- anywhere — but they decide who gets buzzed, which is the difference between
+-- an alert people act on and one they mute within a week.
+--
+-- "Signed in today" stands in for "on shift". Sessions reset at 3am, so someone
+-- who has not signed in since then is almost certainly not at work, and buzzing
+-- a porter at home on their day off is the fastest way to have the whole team
+-- turn notifications off.
+--
+-- service_role only: this returns a list of push endpoints, which is exactly
+-- the sort of thing that should never be readable from a phone.
+create or replace function public.push_targets(p_zone text)
+returns table(endpoint text)
+language sql stable security definer set search_path = '' as $$
+  select ps.endpoint
+    from public.push_subscriptions ps
+    join public.users u on u.id = ps.user_id
+   where u.active
+     and case when p_zone = '510' then u.can_claim_510 else u.can_claim_lower end
+     and exists (
+       select 1 from public.login_attempts la
+        where la.user_id = ps.user_id
+          and la.succeeded
+          and la.at >= public.app_day_start()
+     );
+$$;
+
+-- Drop an endpoint the push service has told us is dead. Called by the notify
+-- function on a 404 or 410; without it, dead endpoints accumulate forever and
+-- every send gets slower.
+create or replace function public.forget_push_endpoint(p_endpoint text)
+returns void
+language sql security definer set search_path = '' as $$
+  delete from public.push_subscriptions where endpoint = p_endpoint;
+$$;
+
+
 -- --- login (service_role only — never callable from a phone) ----------------
 -- Checks a submitted code against every active user's hash. Returns the user id
 -- or null. The Edge Function calls this, applies the lockout counter, and only
@@ -1159,6 +1231,8 @@ grant execute on function public.cancel_request(uuid)                         to
 -- at whatever rate the internet can manage.
 revoke all on function public.verify_login_code(text)      from public, anon, authenticated;
 revoke all on function public.set_login_code(uuid, text)   from public, anon, authenticated;
+grant execute on function public.push_targets(text)          to service_role;
+grant execute on function public.forget_push_endpoint(text) to service_role;
 grant execute on function public.verify_login_code(text)    to service_role;
 grant execute on function public.set_login_code(uuid, text) to service_role;
 

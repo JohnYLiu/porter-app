@@ -53,6 +53,7 @@ TABLES = [
     "requests",
     "request_events",
     "login_attempts",
+    "push_subscriptions",
 ]
 
 # Tables that must be unreachable even by a fully logged-in ordinary user.
@@ -164,6 +165,8 @@ def phase_a():
         ("app_is_admin",            {}),
         ("app_is_active",           {}),
         ("app_can_claim_zone",      {"p_zone": "510"}),
+        ("push_targets",            {"p_zone": "510"}),
+        ("forget_push_endpoint",    {"p_endpoint": "https://example.invalid/x"}),
     ]:
         status, body = request(f"/rest/v1/rpc/{fn}", "POST", args)
         check(f"anon call {fn}()", status >= 400, f"HTTP {status}")
@@ -239,6 +242,16 @@ def phase_b():
         for role, tok in tokens.items():
             status, body = request(f"/rest/v1/{table}?select=*", token=tok)
             check(f"{role} read {table}", refused(status, body), f"HTTP {status}")
+
+    # Push endpoints are exactly what somebody would need to buzz every phone
+    # in the dealership, so nobody may read anyone else's.
+    print("\n Push subscriptions are private to the device that made them:")
+    for role, tok in tokens.items():
+        st, rows = request("/rest/v1/push_subscriptions?select=endpoint,user_id", token=tok)
+        others = [r for r in rows if r.get("user_id") != ids.get(role)] \
+                 if isinstance(rows, list) else ["unreadable"]
+        check(f"{role} sees only its own subscriptions", not others,
+              f"HTTP {st}, {len(rows) if isinstance(rows, list) else '?'} rows")
 
     print("\n Capabilities are enforced by the database, not by hidden buttons:")
     if porter:
