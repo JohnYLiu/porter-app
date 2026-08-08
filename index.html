@@ -51,6 +51,13 @@
   --loc-drive:     #4ade80;
   --loc-wash:      #22d3ee;
   --loc-lower_lot: #f472b6;
+  /* The bar's fill, named because the porter bar's bump has to match it
+     exactly — the two are meant to read as one continuous surface.
+     Opaque, and that matters: at 94% the bump and the bar drifted apart over
+     scrolling content, because the bar blurs its backdrop and the bump cannot.
+     6% of a dark page is not worth a seam down the middle of the tab bar. */
+  --navbg:     #0c0d0f;
+
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
 }
@@ -131,7 +138,7 @@ nav {
   position: sticky; bottom: 0; z-index: 20;
   display: flex; gap: 2px;
   padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
-  background: rgba(12,13,15,.94); backdrop-filter: blur(12px);
+  background: var(--navbg);
   border-top: 1px solid var(--line);
 }
 nav button {
@@ -159,45 +166,57 @@ nav .badge {
  * the only piece of the bar with real contrast in it.
  */
 nav.porterbar { display: grid; grid-template-columns: 1fr auto 1fr; }
-/* The disc breaks 30px above the bar, so the last card in a scrolled list would
+/* The bump rises 40px above the bar, so the last card in a scrolled list would
    otherwise finish underneath it. Buy that space back. */
 #app.porterui main { padding-bottom: 58px; }
 nav.porterbar .side { display: flex; gap: 2px; min-width: 0; }
 nav.porterbar .side > button { flex: 1; }
 
 nav.porterbar .hero {
-  position: relative; flex: none; width: 88px;
+  position: relative; flex: none; width: 96px;
   /* The label sits at the bottom of the bar in line with the other four; the
-     disc above it is positioned, so it can break the top edge without
+     icon above it is positioned, so it can sit up inside the bump without
      stretching the bar to fit. */
   justify-content: flex-end; padding-bottom: 7px;
   background: none;
 }
-nav.porterbar .hero .disc {
-  position: absolute; left: 50%; top: -30px; transform: translateX(-50%);
-  width: 58px; height: 58px; border-radius: 50%;
-  display: grid; place-items: center;
-  background: var(--surface-2);
-  /* A ring in the page colour rather than a border colour: it reads as a hole
-     cut in the bar with the disc coming through it, which is what sells the
-     thing as raised rather than stuck on. */
-  border: 4px solid var(--bg);
-  box-shadow: 0 4px 14px rgba(0,0,0,.5);
+
+/* The bar's own top edge bulges upward here, in the bar's own colour and
+   carrying the bar's own hairline around the arc. Not a button sitting on the
+   bar — the bar itself pushed up. Its flat bottom overlaps the straight border
+   by a pixel so the hairline does not cut across the base of the bump. */
+nav.porterbar .hero::before {
+  content: "";
+  position: absolute; left: 50%; transform: translateX(-50%);
+  /* 92 wide by 46 high — a true half-circle. Sized and placed so its flat base
+     lands exactly on the bar's hairline: one pixel taller and the side walls
+     poke through as two ticks below the line. */
+  top: -52px; width: 92px; height: 46px;
+  border-radius: 92px 92px 0 0;
+  background: var(--navbg);
+  border: 1px solid var(--line); border-bottom: none;
 }
-nav.porterbar .hero .ico { font-size: 1.6rem; color: var(--text); }
-nav.porterbar .hero .lbl { color: var(--dim); }
 
-/* On the Queue the disc inverts. Straight silver-on-black is the highest
-   contrast this palette has — deliberately louder than the subtle fill the
-   other tabs get, because the whole point is that this one is findable
-   without looking. */
+/* White at rest, not just when selected. This is the tab a porter reaches for
+   without looking, so it is the one place in the bar that stays at full
+   contrast whatever else is open. */
+nav.porterbar .hero .ico { font-size: 1.6rem; color: #fff; }
+nav.porterbar .hero .lbl { color: #fff; }
+
+nav.porterbar .hero .disc {
+  position: absolute; left: 50%; top: -42px; transform: translateX(-50%);
+  display: grid; place-items: center;
+}
+
+/* Selected. The bump keeps the bar's fill — the whole point of the shape is
+   that it is the bar, not something sitting on it — so the state shows in the
+   hairline instead, which brightens. The icon and label do not change: they are
+   already as bright as they go. */
 nav.porterbar .hero[aria-current="true"] { background: none; }
-nav.porterbar .hero[aria-current="true"] .disc { background: var(--silver); }
-nav.porterbar .hero[aria-current="true"] .ico { color: var(--bg); }
-nav.porterbar .hero[aria-current="true"] .lbl { color: var(--text); }
+nav.porterbar .hero[aria-current="true"]::before { border-color: var(--dim); }
 
-/* The count belongs on the disc, not trailing the word. */
-nav.porterbar .hero .badge { position: absolute; top: -1px; right: -3px; transform: none; }
+/* The count belongs up in the bump, not trailing the word. */
+nav.porterbar .hero .badge { position: absolute; top: -7px; right: -20px; transform: none; }
 
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
