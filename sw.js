@@ -24,7 +24,7 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v24";
+const CACHE = "porter-v25";
 
 const SHELL = [
   "./",
@@ -77,15 +77,27 @@ self.addEventListener("push", (e) => {
   );
 });
 
+/* Tapping a notification lands on the Queue, not wherever they were before.
+ *
+ * The notification means "a car is waiting", so the queue is the only screen
+ * worth arriving at. Someone who left the app on History last night should not
+ * have to find their way back at 7am.
+ *
+ * Two paths: if the app is already running, focus it and tell it to switch —
+ * a focused window does not reload, so a URL alone would do nothing. If it is
+ * not running, open it with a hash the app reads on startup.
+ */
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
-  // Focus the app if it is already open rather than opening a second copy.
   e.waitUntil((async () => {
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of clients) {
-      if (c.url.includes(self.location.origin)) return c.focus();
+      if (c.url.startsWith(self.location.origin)) {
+        c.postMessage({ type: "show-queue" });
+        return c.focus();
+      }
     }
-    return self.clients.openWindow("./");
+    return self.clients.openWindow("./#queue");
   })());
 });
 

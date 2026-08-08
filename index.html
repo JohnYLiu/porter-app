@@ -922,6 +922,21 @@ function pushCard() {
           </button>`;
 }
 
+/* Jump to the Queue, from wherever the app happens to be.
+ *
+ * Called when a notification is tapped. Dismisses an open request sheet too —
+ * arriving at the queue with a stale car's details covering it would be worse
+ * than not switching at all.
+ */
+function showQueue() {
+  if (!session) return;
+  tab = "queue";
+  sheetId = null; sheetInline = false;
+  $("sheet").hidden = true;
+  resetSheetPosition();
+  render();
+}
+
 async function enablePush() {
   const btn = $("enablePush");
   if (btn) { btn.disabled = true; btn.textContent = "Asking…"; }
@@ -2072,6 +2087,13 @@ async function start() {
 
   await loadAdvisors();
   await loadRequests();
+
+  // Opened cold from a notification. Consumed immediately so a later reload
+  // does not keep dragging them back to the queue.
+  if (location.hash === "#queue") {
+    tab = "queue";
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   render();
   syncPush().then(render).catch(() => {});   // never blocks the queue appearing
 
@@ -2096,6 +2118,15 @@ $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
       lastFieldTouch = Date.now();
     }
   }, true));
+
+// A tapped notification, on an app that was already running. The window is
+// focused rather than reloaded, so a URL would change nothing — the worker
+// tells us directly instead.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type === "show-queue") showQueue();
+  });
+}
 
 document.addEventListener("visibilitychange", () => { if (!document.hidden && session) refresh(); });
 
