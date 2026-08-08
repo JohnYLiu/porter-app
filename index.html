@@ -473,6 +473,11 @@ const SUPABASE_URL = "https://txnijhgfitfklyjativk.supabase.co";
 const SUPABASE_KEY = "sb_publishable_rJEFL4ZmSL_fWJ2v33rVUg_Ovwcmosw";
 
 const POLL_MS = 3000;          // how often the queue refreshes while on screen
+
+/* How long after touching a form field the app leaves the DOM alone. Long
+   enough to type a tag or scroll an open dropdown; short enough that a field
+   left focused never stops the screen updating. */
+const FIELD_GRACE_MS = 8000;
 const DAY_BOUNDARY_HOUR = 3;   // sessions end at 3am, matching app_day_start() in SQL
 const STORE = "porter.session.v1";
 
@@ -484,6 +489,7 @@ let tab = "queue";
 let zone = "510";        // which area sub-tab is showing in Queue / In Progress
 let poller = null;
 let lastFetchOk = true;
+let lastFieldTouch = 0;        // when a form field was last actually interacted with
 
 /* --- Small helpers ------------------------------------------------------ */
 const $ = (id) => document.getElementById(id);
@@ -748,9 +754,16 @@ async function loadRequests() {
   // when that tab asks for it.
   const since = new Date(Date.now() - 7 * 864e5).toISOString();
   try {
-    requests = await api(`/rest/v1/requests?select=${SELECT}` +
+    // DESC with the limit, then sorted back. Ordering ascending and taking 500
+    // keeps the OLDEST 500 — so the moment this dealership passes 500 requests
+    // in a week, the newest ones silently stop arriving and the queue quietly
+    // goes stale. Ordering descending keeps the newest, which is what a limit
+    // is for.
+    const rows = await api(`/rest/v1/requests?select=${SELECT}` +
       `&or=(status.in.(unclaimed,claimed),created_at.gte.${since})` +
-      `&order=created_at.asc&limit=500`);
+      `&order=created_at.desc&limit=500`);
+    // The queue renders in array order and must be oldest first.
+    requests = rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     lastFetchOk = true;
   } catch (e) {
     if (e.status === 401) { signOut(); return; }
@@ -1783,10 +1796,18 @@ async function refresh() {
   // Nothing here needs live data anyway; it reloads itself after every write.
   if (tab === "admin") { renderTabs(); return; }
 
-  // Same reasoning anywhere else a field has focus, such as the history
-  // filters: leave the DOM alone until they are done with it.
+  // Same reasoning anywhere else a field is in use, such as the history filters
+  // or an open dropdown: leave the DOM alone rather than yanking it away.
+  //
+  // TIME-BOUND, and that is the whole point. Checking focus alone froze the
+  // History tab permanently — a <select> keeps focus after you choose an
+  // option, so one use of a filter meant every later poll skipped the render
+  // and the list never changed again. A guard with no expiry is not a guard,
+  // it is a latch.
   const busy = document.activeElement;
-  if (busy && /^(INPUT|SELECT|TEXTAREA)$/.test(busy.tagName)) { renderTabs(); return; }
+  const inUse = busy && /^(INPUT|SELECT|TEXTAREA)$/.test(busy.tagName)
+                && Date.now() - lastFieldTouch < FIELD_GRACE_MS;
+  if (inUse) { renderTabs(); return; }
 
   render();
 }
@@ -1814,6 +1835,16 @@ $("code").addEventListener("input", e => {
 $("signOutBtn").onclick = signOut;
 $("adminBtn").onclick = () => { tab = "admin"; render(); };
 $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
+// Stamped on real interaction, not on focus alone — focus persists long after a
+// dropdown has closed, and that persistence is exactly what froze the History
+// tab. Captured, so it still fires for elements inside a re-rendered view.
+["input", "keydown", "pointerdown", "change"].forEach(evt =>
+  document.addEventListener(evt, (e) => {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
+      lastFieldTouch = Date.now();
+    }
+  }, true));
+
 document.addEventListener("visibilitychange", () => { if (!document.hidden && session) refresh(); });
 
 loadSession();
