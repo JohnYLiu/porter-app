@@ -97,10 +97,14 @@ create table if not exists public.users (
   -- truth for that rule. Do not re-derive it anywhere else.
   can_issue        boolean not null default false,
 
-  -- Porters come in two kinds, working different parts of the site. Modelled as
-  -- two independent flags rather than one "porter type" so somebody who covers
-  -- both areas is just a person with both ticked, instead of needing a third
-  -- type inventing for them.
+  -- LABELS, NOT PERMISSIONS. These say where somebody normally works, and are
+  -- shown under their name — "510 Porter", "Lower Lot Porter". They grant
+  -- nothing: anyone signed in can claim and deliver a car in either area,
+  -- including a cashier, because whoever is nearest should take it.
+  --
+  -- Kept as two flags rather than one field so a person who covers both is
+  -- simply someone with both ticked. See app_can_claim_zone() in section 4,
+  -- which is where the restriction would go back if it is ever wanted.
   can_claim_510    boolean not null default false,
   can_claim_lower  boolean not null default false,
 
@@ -413,27 +417,24 @@ returns boolean language sql stable security definer set search_path = '' as $$
                    from public.users where id = auth.uid() and active), false);
 $$;
 
--- Can this person claim anything at all? Used to decide whether they get a
--- "My Car" tab. Not sufficient on its own to claim a particular car.
+-- Claiming is open to everyone signed in, in either area.
+--
+-- can_claim_510 and can_claim_lower NO LONGER GRANT ANYTHING. They survive as
+-- a label — "510 Porter", "Lower Lot Porter" — shown under someone's name so it
+-- is clear where they normally work. Whoever is nearest the car takes it,
+-- including a cashier.
+--
+-- Kept as functions rather than deleted, and app_can_claim_zone keeps its now
+-- unused argument, so restoring the restriction is a change to these two bodies
+-- and nothing else. Issuing is still a real permission; see app_can_issue().
 create or replace function public.app_can_claim()
 returns boolean language sql stable security definer set search_path = '' as $$
-  select coalesce((select (can_claim_510 or can_claim_lower or is_manager)
-                   from public.users where id = auth.uid() and active), false);
+  select public.app_is_active();
 $$;
 
--- Can this person claim a car in THIS area? This is the one that matters.
---
--- The two queues are separated in the interface, but that is presentation. A
--- 510 porter who never sees a lower lot car in a list can still send the claim
--- by hand, so the restriction has to live here as well.
 create or replace function public.app_can_claim_zone(p_zone text)
 returns boolean language sql stable security definer set search_path = '' as $$
-  select coalesce((select case
-                            when is_manager    then true
-                            when p_zone = '510' then can_claim_510
-                            else                     can_claim_lower
-                          end
-                   from public.users where id = auth.uid() and active), false);
+  select public.app_is_active();
 $$;
 
 create or replace function public.app_is_manager()
@@ -681,14 +682,13 @@ declare
   v_winner text;
   v_zone   text;
 begin
+  -- Both of these are permissive now: claiming is open to anyone signed in, in
+  -- either area. The calls stay so that narrowing it again is a change to the
+  -- two function bodies in section 4 and nothing here.
   if not public.app_can_claim() then
     raise exception 'You do not have permission to claim cars' using errcode = '42501';
   end if;
 
-  -- Read the area first, purely for the permission check. This does NOT weaken
-  -- the race guarantee below: the status test stays inside the UPDATE, which is
-  -- the only thing that has to be atomic. Being told "not your area" a moment
-  -- before someone else claims it is harmless; both answers are a refusal.
   select zone into v_zone from public.requests where id = p_id;
   if v_zone is null then
     raise exception 'No such request' using errcode = '22023';

@@ -36,12 +36,13 @@ KEY = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_rJEFL4ZmSL_fWJ2
 
 # Fill these in after seeding, then Phase B runs. Codes for throwaway test
 # accounts only — never a real member of staff's code.
+#
+# Manager is optional: several checks below need one and skip themselves with a
+# note if it is absent, rather than reporting a security failure.
 TEST_ACCOUNTS = {
-    "porter":   "11111111",
-    "porter2":  "22222222",
-    "lower":    "55555555",
-    "cashier":  "33333333",
-    "manager":  "44444444",
+    "porter":  "52594831",   # labelled 510
+    "lower":   "84188536",   # labelled Lower Lot
+    "cashier": "51936154",
 }
 
 TABLES = [
@@ -229,7 +230,7 @@ def phase_b():
         return
 
     porter, cashier = tokens.get("porter"), tokens.get("cashier")
-    porter2, manager = tokens.get("porter2"), tokens.get("manager")
+    porter2, manager = tokens.get("lower"), tokens.get("manager")
 
     print("\n Secrets stay unreachable even when logged in:")
     for table in SECRET_TABLES:
@@ -260,13 +261,11 @@ def phase_b():
             still = field(f"/rest/v1/users?id=eq.{target}&select=is_admin", porter)
             check(f"porter makes {label} admin", still is False, f"is_admin={still}")
 
-    if cashier:
-        status, body = request("/rest/v1/rpc/claim_request", "POST",
-                               {"p_id": "00000000-0000-0000-0000-000000000000"},
-                               token=cashier)
-        check("cashier claims a car", status >= 400, f"HTTP {status}")
+    # No "cashier cannot claim" check any more: claiming is open to everyone,
+    # deliberately. Issuing is the one capability that still gates, and the
+    # porter check above covers it.
 
-    print("\n Two porters, one car:")
+    print("\n Two people, one car:")
     if not (cashier and porter and porter2):
         return
 
@@ -365,27 +364,30 @@ def phase_b():
         return request("/functions/v1/admin", "POST", payload, token=token)
 
     probe_new = {"action": "create_user", "name": "Intruder", "is_manager": True}
-    st, body = admin_call(probe_new, token=manager)
+    st, body = admin_call(probe_new, token=porter)
 
     if st == 404:
         check("admin function is deployed", False,
               "not found — deploy supabase/functions/admin, then re-run")
     else:
-        check("manager creates a user", st == 403, f"HTTP {st}")
-        for role in ("porter", "cashier", "lower"):
-            s, _ = admin_call(probe_new, token=tokens.get(role))
+        # Every signed-in role that is not the admin. A manager is included when
+        # one exists, since a manager is the closest thing to an admin — but its
+        # absence must not turn these into 401s from an anonymous call and read
+        # as passes for the wrong reason.
+        for role in [r for r in ("porter", "cashier", "lower", "manager") if tokens.get(r)]:
+            s, _ = admin_call(probe_new, token=tokens[role])
             check(f"{role} creates a user", s == 403, f"HTTP {s}")
+
+            s, _ = admin_call({"action": "reset_code", "user_id": ids.get("porter")},
+                              token=tokens[role])
+            check(f"{role} resets someone's code", s == 403, f"HTTP {s}")
+
+            s, _ = admin_call({"action": "delete_user", "user_id": ids.get("porter")},
+                              token=tokens[role])
+            check(f"{role} deletes an account", s == 403, f"HTTP {s}")
 
         s, _ = admin_call(probe_new)                       # no session at all
         check("anon creates a user", s in (401, 403), f"HTTP {s}")
-
-        s, _ = admin_call({"action": "reset_code", "user_id": ids.get("porter")},
-                          token=manager)
-        check("manager resets someone's code", s == 403, f"HTTP {s}")
-
-        s, _ = admin_call({"action": "delete_user", "user_id": ids.get("porter")},
-                          token=manager)
-        check("manager deletes an account", s == 403, f"HTTP {s}")
 
         s, _ = admin_call({"action": "delete_user", "user_id": ids.get("porter")})
         check("anon deletes an account", s in (401, 403), f"HTTP {s}")
@@ -403,95 +405,94 @@ def phase_b():
               isinstance(rows, list) and len(rows) == 0,
               f"{len(rows) if isinstance(rows, list) else '?'} found")
 
-    # --- Porter areas -------------------------------------------------------
-    # The two queues are separated in the interface, but that is presentation. A
-    # 510 porter who never sees a lower lot car in a list can still send the
-    # claim by hand, so the refusal has to come from the database.
-    print("\n A porter's area is enforced, not just filtered out of the list:")
+    # --- Anyone can work either area ----------------------------------------
+    # The two areas are organisation, not permission — a car should be taken by
+    # whoever is nearest it, cashier included. Issuing is the only capability
+    # that still gates, and it is checked above.
+    #
+    # These used to assert the opposite. When a rule is removed its tests have to
+    # go with it: a test asserting a rule that no longer exists either fails
+    # loudly or, worse, passes for the wrong reason.
+    print("\n Claiming is open to everyone, in either area:")
     lower = tokens.get("lower")
     if not lower:
         check("lower lot porter available", False, "no 'lower' test account")
         return
 
-    # Check the fixture BEFORE asserting anything about it.
-    #
-    # These tests only mean something if each porter holds exactly one area. The
-    # first time this ran, the migration had widened both test porters to BOTH
-    # areas, so a correct refusal never happened and the suite reported a
-    # security failure that did not exist. A security test that cries wolf over
-    # its own test data is worse than no test — people stop believing it.
-    def one_area_only(role, want_510):
-        u = users.get(role, {})
-        ok = bool(u.get("can_claim_510")) == want_510 and \
-             bool(u.get("can_claim_lower")) == (not want_510)
-        return check(f"fixture: {role} holds only the "
-                     f"{'510' if want_510 else 'lower lot'} area",
-                     ok, f"510={u.get('can_claim_510')} lower={u.get('can_claim_lower')}")
+    def make(code, origin, dest):
+        st, rq = request("/rest/v1/rpc/create_request", "POST",
+                         {"p_car_code": code, "p_origin": origin,
+                          "p_destination": dest}, token=cashier)
+        if st != 200:
+            check(f"create {code}", False, f"HTTP {st}")
+            return None
+        return rq if isinstance(rq, dict) else rq[0]
 
-    fixture_ok = one_area_only("porter", True) & one_area_only("lower", False)
-    if not fixture_ok:
-        print("      ^ re-run tools/seed.py; it now corrects test account areas.")
-        print("        The area checks below are skipped — they cannot mean")
-        print("        anything until each test porter holds one area.")
-        return
-
-    # drive -> express: neither end is 510 or 525, so this is a lower lot job.
-    status, req2 = request("/rest/v1/rpc/create_request", "POST",
-                           {"p_car_code": "LOWER1", "p_origin": "drive",
-                            "p_destination": "express"}, token=cashier)
-    if status != 200:
-        check("create a lower lot request", False, f"HTTP {status}")
-        return
-    r2 = req2["id"] if isinstance(req2, dict) else req2[0]["id"]
-    zone2 = (req2 if isinstance(req2, dict) else req2[0]).get("zone")
-    check("drive to express is routed to the lower lot", zone2 == "lower_lot", f"zone={zone2}")
-
-    sa, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=porter)
-    check("510 porter claims a lower lot car", sa == 403, f"HTTP {sa}")
-
-    sb, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=lower)
-    check("lower lot porter claims it", sb == 200, f"HTTP {sb}")
-
-    # 'lower_lot' is a LOCATION as well as an AREA, and they are not the same
-    # thing. A car going FROM the lower lot TO 510 is a 510 job, because one end
-    # is 510 — a 510 porter handles it even though it starts in the lower lot.
-    # Easy to get backwards, so it is pinned down here.
-    status, req4 = request("/rest/v1/rpc/create_request", "POST",
-                           {"p_car_code": "LOCVAREA", "p_origin": "lower_lot",
-                            "p_destination": "510"}, token=cashier)
-    if status == 200:
-        row4 = req4 if isinstance(req4, dict) else req4[0]
-        check("lower lot location to 510 is a 510 job",
-              row4.get("zone") == "510", f"zone={row4.get('zone')}")
-        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": row4["id"]},
+    def clear(row):
+        request("/rest/v1/rpc/unclaim_request", "POST", {"p_id": row["id"]},
                 token=manager or cashier)
-    else:
-        check("lower lot is accepted as a location", False, f"HTTP {status}")
+        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": row["id"]},
+                token=manager or cashier)
 
-    # And the reverse: a lower lot porter must not take a 510 job.
-    status, req3 = request("/rest/v1/rpc/create_request", "POST",
-                           {"p_car_code": "UPPER1", "p_origin": "525",
-                            "p_destination": "wash"}, token=cashier)
-    if status == 200:
-        r3 = req3["id"] if isinstance(req3, dict) else req3[0]["id"]
-        zone3 = (req3 if isinstance(req3, dict) else req3[0]).get("zone")
-        check("525 to wash is routed to 510", zone3 == "510", f"zone={zone3}")
+    low = make("LOWJOB", "drive", "express")
+    if low:
+        check("drive to express is a lower lot job",
+              low.get("zone") == "lower_lot", f"zone={low.get('zone')}")
+        st, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": low["id"]}, token=porter)
+        check("someone labelled 510 claims a lower lot car", st == 200, f"HTTP {st}")
+        request("/rest/v1/rpc/complete_request", "POST", {"p_id": low["id"]}, token=porter)
 
-        sc, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r3}, token=lower)
-        check("lower lot porter claims a 510 car", sc == 403, f"HTTP {sc}")
+    up = make("UPJOB", "525", "wash")
+    if up:
+        check("525 to wash is a 510 job", up.get("zone") == "510", f"zone={up.get('zone')}")
+        st, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": up["id"]}, token=lower)
+        check("someone labelled Lower Lot claims a 510 car", st == 200, f"HTTP {st}")
+        request("/rest/v1/rpc/complete_request", "POST", {"p_id": up["id"]}, token=lower)
 
-        sd, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r3}, token=porter)
-        check("510 porter claims it", sd == 200, f"HTTP {sd}")
+    cash = make("CASHJOB", "510", "drive")
+    if cash:
+        st, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": cash["id"]}, token=cashier)
+        check("a cashier claims a car", st == 200, f"HTTP {st}")
+        st, _ = request("/rest/v1/rpc/complete_request", "POST", {"p_id": cash["id"]}, token=cashier)
+        check("a cashier delivers it", st == 200, f"HTTP {st}")
 
-        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": r3}, token=manager)
+    # 'lower_lot' is a LOCATION as well as an AREA. A car going FROM the lower
+    # lot TO 510 is a 510 job, because one end is 510. Easy to get backwards, so
+    # it stays pinned down even though nothing is gated on it any more — the
+    # queue a car appears in still depends on it.
+    loc = make("LOCVAREA", "lower_lot", "510")
+    if loc:
+        check("lower lot location to 510 is a 510 job",
+              loc.get("zone") == "510", f"zone={loc.get('zone')}")
+        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": loc["id"]},
+                token=manager or cashier)
 
-    # A manager works both areas.
-    if manager:
-        se, _ = request("/rest/v1/rpc/unclaim_request", "POST", {"p_id": r2}, token=manager)
-        sf, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=manager)
-        check("manager claims in either area", sf == 200, f"HTTP {sf}")
+    # --- What a claim still protects ----------------------------------------
+    print("\n A claim still belongs to the person who made it:")
+    held = make("HELDJOB", "510", "express")
+    if held:
+        st, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": held["id"]}, token=porter)
+        check("first person claims it", st == 200, f"HTTP {st}")
 
-    request("/rest/v1/rpc/cancel_request", "POST", {"p_id": r2}, token=manager or cashier)
+        st, b = request("/rest/v1/rpc/claim_request", "POST", {"p_id": held["id"]}, token=lower)
+        msg = b.get("message", "") if isinstance(b, dict) else ""
+        check("a second person claims the same car", st == 409, f"HTTP {st}: {msg}")
+
+        st, _ = request("/rest/v1/rpc/complete_request", "POST", {"p_id": held["id"]}, token=lower)
+        check("somebody else marks it delivered", st == 403, f"HTTP {st}")
+
+        st, _ = request("/rest/v1/rpc/unclaim_request", "POST", {"p_id": held["id"]}, token=cashier)
+        check("somebody else releases it", st == 403, f"HTTP {st}")
+
+        if manager:
+            st, _ = request("/rest/v1/rpc/unclaim_request", "POST", {"p_id": held["id"]},
+                            token=manager)
+            check("a manager releases it", st == 200, f"HTTP {st}")
+            request("/rest/v1/rpc/cancel_request", "POST", {"p_id": held["id"]}, token=manager)
+        else:
+            print("      (manager checks skipped — no 'manager' test account configured)")
+            request("/rest/v1/rpc/unclaim_request", "POST", {"p_id": held["id"]}, token=porter)
+            request("/rest/v1/rpc/cancel_request", "POST", {"p_id": held["id"]}, token=cashier)
 
 
 def main():

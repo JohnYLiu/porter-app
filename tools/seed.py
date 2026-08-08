@@ -52,13 +52,16 @@ EMAIL_DOMAIN = "porter.invalid"
 # undoes every protection in schema.sql. It is a step in the runbook, not
 # something either of us should be relying on memory for.
 #
-# Two 510 porters, because proving that two porters cannot both claim the same
-# car needs two people who are allowed to claim the SAME car. One lower lot
-# porter, to prove the area restriction actually refuses.
+# The 510 and lower columns are LABELS now, not permissions — anyone can claim
+# in either area. They are still set so the label under each name is right, and
+# so the suite has one of each to check the areas are not secretly gating.
+#
+# Codes here are placeholders. The live test accounts were recreated from the
+# admin dashboard, so tests/security_test.py carries the real ones; update both
+# together if they change again.
 TEST_USERS = [
     # name               code        issue  510    lower  manager
     ("Test Porter",      "11111111", False, True,  False, False),
-    ("Test Porter Two",  "22222222", False, True,  False, False),
     ("Test Lower Porter","55555555", False, False, True,  False),
     ("Test Cashier",     "33333333", True,  False, False, False),
     ("Test Manager",     "44444444", False, False, False, True),

@@ -518,17 +518,17 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
 const isManager = () => !!session?.user && session.user.is_manager;
-const canIssue  = () => !!session?.user && (session.user.can_issue || session.user.is_manager);
-const canClaim  = () => canClaimZone("510") || canClaimZone("lower_lot");
 
-// Mirrors app_can_claim_zone() in db/schema.sql. That one is the authority —
-// this only decides what to draw. Every claim is re-checked by the database.
-function canClaimZone(zone) {
-  const u = session?.user;
-  if (!u) return false;
-  if (u.is_manager) return true;
-  return zone === "510" ? !!u.can_claim_510 : !!u.can_claim_lower;
-}
+// Issuing is the only real capability left. Everything else about a car —
+// claiming it, delivering it — is open to anyone signed in.
+const canIssue  = () => !!session?.user && (session.user.can_issue || session.user.is_manager);
+
+// Claiming is open to everyone, in either area. can_claim_510 and
+// can_claim_lower are labels describing where someone normally works; they
+// grant nothing. Mirrors app_can_claim_zone() in db/schema.sql, which is the
+// authority — this only decides what to draw.
+const canClaim     = () => !!session?.user;
+const canClaimZone = () => !!session?.user;
 
 /* The five locations, in the order cashiers use them. The first four are the
    common ones; wash is the tail. */
@@ -552,12 +552,11 @@ const ZONES = [
 
 // Which area sub-tabs this person gets. Porters see only where they work;
 // cashiers and managers see both, because they need the whole picture.
+// Everyone sees both areas now, because everyone can work in both. The split
+// survives as organisation — a porter standing in the lower lot still wants to
+// see the lower lot queue first — not as a restriction.
 function visibleZones() {
-  const u = session?.user;
-  if (!u) return [];
-  if (u.is_manager || u.can_issue || u.is_admin) return ZONES;
-  const mine = ZONES.filter(z => canClaimZone(z.id));
-  return mine.length ? mine : ZONES;   // view-only staff still see both
+  return session?.user ? ZONES : [];
 }
 
 /* Who a key tag belongs to, for display.
@@ -611,16 +610,15 @@ function roleLabel(u) {
   const parts = [];
   if (u.is_admin) parts.push("Admin");
   if (u.is_manager) parts.push("Manager");
-  if (!u.is_manager) {
-    if (u.can_issue) parts.push("Cashier");
-    // Name the area, since it decides what they can pick up. A porter seeing a
-    // short queue should be able to tell at a glance whether that is because
-    // work is slow or because they are looking at the wrong half of the site.
-    if (u.can_claim_510 && u.can_claim_lower) parts.push("Porter · 510 + Lower Lot");
-    else if (u.can_claim_510)   parts.push("510 Porter");
-    else if (u.can_claim_lower) parts.push("Lower Lot Porter");
-  }
-  return parts.join(" · ") || "No permissions";
+  if (!u.is_manager && u.can_issue) parts.push("Cashier");
+
+  // Where they normally work. A label, not a permission — anyone can claim in
+  // either area — but still worth showing so it is clear who is usually where.
+  if (u.can_claim_510 && u.can_claim_lower) parts.push("510 + Lower Lot");
+  else if (u.can_claim_510)   parts.push("510 Porter");
+  else if (u.can_claim_lower) parts.push("Lower Lot Porter");
+
+  return parts.join(" · ") || "Staff";
 }
 
 function ago(iso) {
@@ -1326,9 +1324,11 @@ function adminStaff() {
         <div class="perms">
           ${perm(u, "can_issue", "Issue requests")}
           ${perm(u, "is_manager", "Management")}
-          ${perm(u, "can_claim_510", "Claim 510")}
-          ${perm(u, "can_claim_lower", "Claim Lower Lot")}
+          ${perm(u, "can_claim_510", "510 area")}
+          ${perm(u, "can_claim_lower", "Lower Lot area")}
         </div>
+        <p class="checkhint">The two area boxes are labels for where someone
+          normally works. Anyone signed in can claim and deliver in both.</p>
         ${u.is_admin ? `<p class="checkhint">The admin account always has everything.
                         Change it in the database, not here.</p>` : ""}
       </div>`).join("")}`;
@@ -1490,8 +1490,8 @@ function showAddUser() {
       <div class="perms">
         <label class="perm"><input type="checkbox" id="nuIssue"> Issue requests</label>
         <label class="perm"><input type="checkbox" id="nuMgr"> Management</label>
-        <label class="perm"><input type="checkbox" id="nu510"> Claim 510</label>
-        <label class="perm"><input type="checkbox" id="nuLow"> Claim Lower Lot</label>
+        <label class="perm"><input type="checkbox" id="nu510"> 510 area</label>
+        <label class="perm"><input type="checkbox" id="nuLow"> Lower Lot area</label>
       </div>
       <p class="checkhint">A code is generated and shown once. It is stored hashed —
         nobody can look it up afterwards, including you.</p>
