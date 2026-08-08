@@ -61,12 +61,17 @@ ADVISORS = [
 # DEACTIVATE THESE BEFORE THE PILOT. A live account with the code 11111111
 # undoes every protection in schema.sql. It is a step in the runbook, not
 # something either of us should be relying on memory for.
+#
+# Two 510 porters, because proving that two porters cannot both claim the same
+# car needs two people who are allowed to claim the SAME car. One lower lot
+# porter, to prove the area restriction actually refuses.
 TEST_USERS = [
-    # name              code        issue  claim  manager
-    ("Test Porter",     "11111111", False, True,  False),
-    ("Test Porter Two", "22222222", False, True,  False),
-    ("Test Cashier",    "33333333", True,  False, False),
-    ("Test Manager",    "44444444", False, False, True),
+    # name               code        issue  510    lower  manager
+    ("Test Porter",      "11111111", False, True,  False, False),
+    ("Test Porter Two",  "22222222", False, True,  False, False),
+    ("Test Lower Porter","55555555", False, False, True,  False),
+    ("Test Cashier",     "33333333", True,  False, False, False),
+    ("Test Manager",     "44444444", False, False, False, True),
 ]
 
 
@@ -99,7 +104,8 @@ def die(msg):
     sys.exit(1)
 
 
-def create_user(name, code, can_issue, can_claim, is_manager, is_admin=False):
+def create_user(name, code, can_issue, can_claim_510, can_claim_lower,
+                is_manager, is_admin=False):
     """Create the auth login, the profile row, and the hashed code."""
     status, existing = call(f"/rest/v1/users?select=id,name&name=eq.{urllib.parse.quote(name)}")
     if status == 200 and existing:
@@ -122,7 +128,8 @@ def create_user(name, code, can_issue, can_claim, is_manager, is_admin=False):
 
     status, _ = call("/rest/v1/users", "POST", {
         "id": uid, "name": name,
-        "can_issue": can_issue, "can_claim": can_claim,
+        "can_issue": can_issue,
+        "can_claim_510": can_claim_510, "can_claim_lower": can_claim_lower,
         "is_manager": is_manager, "is_admin": is_admin,
     })
     if status not in (200, 201):
@@ -170,8 +177,8 @@ def main():
 
     # --- Test accounts ----------------------------------------------------
     print("\nTest accounts:")
-    for name, code, issue, claim, manager in TEST_USERS:
-        create_user(name, code, issue, claim, manager)
+    for name, code, issue, z510, zlower, manager in TEST_USERS:
+        create_user(name, code, issue, z510, zlower, manager)
 
     # --- Admin ------------------------------------------------------------
     print("\nYour admin account.")
@@ -193,8 +200,8 @@ def main():
             print("  Those did not match.")
 
         name = input("  Your name as it should appear on requests: ").strip() or "John"
-        create_user(name, code, can_issue=True, can_claim=True,
-                    is_manager=True, is_admin=True)
+        create_user(name, code, can_issue=True, can_claim_510=True,
+                    can_claim_lower=True, is_manager=True, is_admin=True)
 
     print("\nDone.\n")
     print("Test account codes — throwaway, for the security tests only:")

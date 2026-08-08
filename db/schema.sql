@@ -92,12 +92,19 @@ create table if not exists public.users (
   id          uuid primary key references auth.users(id) on delete cascade,
   name        text        not null check (length(trim(name)) between 1 and 60),
 
-  -- The three checkboxes on the admin screen. is_manager implies the other two;
+  -- The checkboxes on the admin screen. is_manager implies all of the others;
   -- see the permission helpers in section 4, which are the single source of
   -- truth for that rule. Do not re-derive it anywhere else.
-  can_issue   boolean     not null default false,
-  can_claim   boolean     not null default false,
-  is_manager  boolean     not null default false,
+  can_issue        boolean not null default false,
+
+  -- Porters come in two kinds, working different parts of the site. Modelled as
+  -- two independent flags rather than one "porter type" so somebody who covers
+  -- both areas is just a person with both ticked, instead of needing a third
+  -- type inventing for them.
+  can_claim_510    boolean not null default false,
+  can_claim_lower  boolean not null default false,
+
+  is_manager       boolean not null default false,
 
   -- Admin is John, and is not one of the checkboxes. Adding and editing users
   -- is admin-only; managers cannot promote themselves.
@@ -153,7 +160,18 @@ create table if not exists public.requests (
   -- The car code. Letters, digits, or both; stored uppercase so that history
   -- filters and duplicate-spotting are not defeated by capitalisation.
   car_code     text        not null check (length(trim(car_code)) between 1 and 20),
-  destination  text        not null check (destination in ('drive', 'express')),
+
+  -- Where the car is now and where it is going. Any of the five locations can
+  -- be either, including the same one for both — a car can be moved within a
+  -- location, and refusing that would just make cashiers lie to the form.
+  origin       text        not null check (origin      in ('510','525','express','drive','wash')),
+  destination  text        not null check (destination in ('510','525','express','drive','wash')),
+
+  -- A stop at the wash on the way. Deliberately separate from destination:
+  -- "drive → wash" and "drive → wash → express" are different journeys, and
+  -- only the second one has somewhere to be afterwards.
+  via_wash     boolean     not null default false,
+
   advisor_id   uuid        not null references public.service_advisors(id),
   note         text        check (note is null or length(note) <= 500),
 
@@ -168,6 +186,19 @@ create table if not exists public.requests (
   completed_at timestamptz,
   cancelled_by uuid        references public.users(id),
   cancelled_at timestamptz,
+
+  -- Which kind of porter this belongs to. Computed by the database, never sent
+  -- by the app: it is a business rule, and a rule the client can supply is a
+  -- rule the client can get wrong. Stored, so the queue can index it.
+  --
+  -- The rule: if EITHER end of the journey is 510 or 525, it is a 510 job.
+  -- Otherwise it is lower lot. A wash stop does not change this — the wash is a
+  -- waypoint, not an endpoint.
+  zone text generated always as (
+    case when origin      in ('510','525')
+           or destination in ('510','525') then '510'
+         else 'lower_lot' end
+  ) stored,
 
   -- Guard rails so a bug cannot leave a row in a nonsensical shape.
   constraint claimed_has_claimer
@@ -231,6 +262,67 @@ create index if not exists login_attempts_fingerprint_idx
   on public.login_attempts (code_fingerprint, at desc) where not succeeded;
 
 
+-- ---------------------------------------------------------------------------
+-- 3b. Migrations for databases created before the two porter areas existed.
+--
+-- `create table if not exists` above defines the shape for a fresh install and
+-- does nothing at all to a table that already exists, so these bring an
+-- existing database up to that same shape. Every step is idempotent — re-running
+-- the whole file finds nothing left to do.
+-- ---------------------------------------------------------------------------
+
+-- --- requests: origin, wash stop, and the derived zone ---------------------
+alter table public.requests add column if not exists origin   text;
+alter table public.requests add column if not exists via_wash boolean not null default false;
+
+-- Rows that predate origins. 'drive' is arbitrary — every one of these is test
+-- data from before the field existed, and there is no real answer to recover.
+update public.requests set origin = 'drive' where origin is null;
+
+alter table public.requests alter column origin set not null;
+
+alter table public.requests drop constraint if exists requests_origin_check;
+alter table public.requests add  constraint requests_origin_check
+  check (origin in ('510','525','express','drive','wash'));
+
+-- Destination used to allow only drive and express.
+alter table public.requests drop constraint if exists requests_destination_check;
+alter table public.requests add  constraint requests_destination_check
+  check (destination in ('510','525','express','drive','wash'));
+
+alter table public.requests add column if not exists zone text
+  generated always as (
+    case when origin      in ('510','525')
+           or destination in ('510','525') then '510'
+         else 'lower_lot' end
+  ) stored;
+
+-- --- users: one claim flag becomes two ------------------------------------
+alter table public.users add column if not exists can_claim_510   boolean not null default false;
+alter table public.users add column if not exists can_claim_lower boolean not null default false;
+
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'users'
+                and column_name = 'can_claim') then
+    -- Anyone who could claim before can claim in both areas until John narrows
+    -- them down. Widening and then restricting is recoverable; guessing an area
+    -- wrong silently hides work from a porter, which is not.
+    execute 'update public.users set can_claim_510 = true, can_claim_lower = true
+              where can_claim and not can_claim_510 and not can_claim_lower';
+    execute 'alter table public.users drop column can_claim';
+  end if;
+end $$;
+
+-- The queue is always filtered to one area, so it is the zone that wants the
+-- index, not the status alone.
+create index if not exists requests_zone_open_idx
+  on public.requests (zone, created_at) where status = 'unclaimed';
+create index if not exists requests_zone_active_idx
+  on public.requests (zone, claimed_at) where status = 'claimed';
+
+
 -- ============================================================================
 -- 4. Permission helpers
 --
@@ -255,9 +347,26 @@ returns boolean language sql stable security definer set search_path = '' as $$
                    from public.users where id = auth.uid() and active), false);
 $$;
 
+-- Can this person claim anything at all? Used to decide whether they get a
+-- "My Car" tab. Not sufficient on its own to claim a particular car.
 create or replace function public.app_can_claim()
 returns boolean language sql stable security definer set search_path = '' as $$
-  select coalesce((select (can_claim or is_manager)
+  select coalesce((select (can_claim_510 or can_claim_lower or is_manager)
+                   from public.users where id = auth.uid() and active), false);
+$$;
+
+-- Can this person claim a car in THIS area? This is the one that matters.
+--
+-- The two queues are separated in the interface, but that is presentation. A
+-- 510 porter who never sees a lower lot car in a list can still send the claim
+-- by hand, so the restriction has to live here as well.
+create or replace function public.app_can_claim_zone(p_zone text)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select coalesce((select case
+                            when is_manager    then true
+                            when p_zone = '510' then can_claim_510
+                            else                     can_claim_lower
+                          end
                    from public.users where id = auth.uid() and active), false);
 $$;
 
@@ -375,11 +484,17 @@ $$;
 
 
 -- --- issue -----------------------------------------------------------------
+-- The old two-location signature is dropped rather than left alongside: an
+-- overload that quietly ignores the origin would be a trap.
+drop function if exists public.create_request(text, text, uuid, text);
+
 create or replace function public.create_request(
   p_car_code    text,
+  p_origin      text,
   p_destination text,
   p_advisor_id  uuid,
-  p_note        text default null
+  p_note        text default null,
+  p_via_wash    boolean default false
 )
 returns public.requests
 language plpgsql security definer set search_path = '' as $$
@@ -396,9 +511,17 @@ begin
     raise exception 'Unknown or inactive service advisor' using errcode = '22023';
   end if;
 
-  insert into public.requests (car_code, destination, advisor_id, note, issued_by)
-  values (upper(trim(p_car_code)), p_destination, p_advisor_id,
-          nullif(trim(coalesce(p_note, '')), ''), v_uid)
+  -- A wash stop is meaningless when the wash is already an endpoint, and
+  -- storing it would render as "wash → wash". Drop it rather than refuse the
+  -- request: the cashier's intent is clear and unambiguous either way.
+  if p_origin = 'wash' or p_destination = 'wash' then
+    p_via_wash := false;
+  end if;
+
+  insert into public.requests
+    (car_code, origin, destination, via_wash, advisor_id, note, issued_by)
+  values (upper(trim(p_car_code)), p_origin, p_destination, coalesce(p_via_wash, false),
+          p_advisor_id, nullif(trim(coalesce(p_note, '')), ''), v_uid)
   returning * into v_row;
 
   insert into public.request_events (request_id, event, actor_id)
@@ -410,12 +533,16 @@ $$;
 
 
 -- --- edit (issuing cashier, while still unclaimed; or any manager) ----------
+drop function if exists public.edit_request(uuid, text, text, uuid, text);
+
 create or replace function public.edit_request(
   p_id          uuid,
   p_car_code    text,
+  p_origin      text,
   p_destination text,
   p_advisor_id  uuid,
-  p_note        text default null
+  p_note        text default null,
+  p_via_wash    boolean default false
 )
 returns public.requests
 language plpgsql security definer set search_path = '' as $$
@@ -444,9 +571,19 @@ begin
     raise exception 'Unknown or inactive service advisor' using errcode = '22023';
   end if;
 
+  if p_origin = 'wash' or p_destination = 'wash' then
+    p_via_wash := false;
+  end if;
+
+  -- Note that editing the locations can move a request between areas, because
+  -- `zone` is generated from them. That is correct: if a cashier corrects the
+  -- destination to 525, it genuinely became a 510 job and should appear in that
+  -- queue. It is only editable while unclaimed, so nobody has it in hand.
   update public.requests
      set car_code    = upper(trim(p_car_code)),
+         origin      = p_origin,
          destination = p_destination,
+         via_wash    = coalesce(p_via_wash, false),
          advisor_id  = p_advisor_id,
          note        = nullif(trim(coalesce(p_note, '')), '')
    where id = p_id
@@ -455,7 +592,10 @@ begin
   insert into public.request_events (request_id, event, actor_id, detail)
   values (p_id, 'edited', v_uid,
           jsonb_build_object('car_code', v_row.car_code,
+                             'origin', v_row.origin,
                              'destination', v_row.destination,
+                             'via_wash', v_row.via_wash,
+                             'zone', v_row.zone,
                              'advisor_id', v_row.advisor_id));
 
   return v_row;
@@ -480,9 +620,22 @@ declare
   v_uid    uuid := public.app_require_user();
   v_row    public.requests;
   v_winner text;
+  v_zone   text;
 begin
   if not public.app_can_claim() then
     raise exception 'You do not have permission to claim cars' using errcode = '42501';
+  end if;
+
+  -- Read the area first, purely for the permission check. This does NOT weaken
+  -- the race guarantee below: the status test stays inside the UPDATE, which is
+  -- the only thing that has to be atomic. Being told "not your area" a moment
+  -- before someone else claims it is harmless; both answers are a refusal.
+  select zone into v_zone from public.requests where id = p_id;
+  if v_zone is null then
+    raise exception 'No such request' using errcode = '22023';
+  end if;
+  if not public.app_can_claim_zone(v_zone) then
+    raise exception 'That car is not in your area' using errcode = '42501';
   end if;
 
   update public.requests
@@ -818,16 +971,16 @@ revoke all on public.request_events   from anon;
 
 -- Operations: logged-in users may call them; the functions themselves decide
 -- whether the caller is allowed to do the thing.
-revoke all on function public.create_request(text, text, uuid, text)          from public, anon;
-revoke all on function public.edit_request(uuid, text, text, uuid, text)      from public, anon;
+revoke all on function public.create_request(text, text, text, uuid, text, boolean)          from public, anon;
+revoke all on function public.edit_request(uuid, text, text, text, uuid, text, boolean)      from public, anon;
 revoke all on function public.claim_request(uuid)                             from public, anon;
 revoke all on function public.unclaim_request(uuid)                           from public, anon;
 revoke all on function public.complete_request(uuid)                          from public, anon;
 revoke all on function public.reopen_request(uuid)                            from public, anon;
 revoke all on function public.cancel_request(uuid)                            from public, anon;
 
-grant execute on function public.create_request(text, text, uuid, text)       to authenticated;
-grant execute on function public.edit_request(uuid, text, text, uuid, text)   to authenticated;
+grant execute on function public.create_request(text, text, text, uuid, text, boolean)       to authenticated;
+grant execute on function public.edit_request(uuid, text, text, text, uuid, text, boolean)   to authenticated;
 grant execute on function public.claim_request(uuid)                          to authenticated;
 grant execute on function public.unclaim_request(uuid)                        to authenticated;
 grant execute on function public.complete_request(uuid)                       to authenticated;

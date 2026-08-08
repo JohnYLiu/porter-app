@@ -8,14 +8,34 @@ Background and rationale: [PLAN.md](PLAN.md). This file is the design as actuall
 ## Roles
 
 Each person has a unique 8-digit code. Typing it identifies them and their permissions —
-there is no name to pick from a list. Three independent checkboxes per person, set by
+there is no name to pick from a list. Four independent checkboxes per person, set by
 John in the admin dashboard:
 
 | Checkbox | Grants |
 | --- | --- |
 | **Issue requests** | Create requests; edit or cancel their own while still unclaimed |
-| **Claim cars** | Claim from the queue, mark delivered, unclaim, reopen own same-day completions |
-| **Management** | Both of the above regardless of the other boxes, plus: unclaim anyone's car, cancel any request at any stage, reopen any completed request |
+| **Claim 510** | Claim, deliver, unclaim and reopen cars in the 510 area |
+| **Claim Lower Lot** | The same, for the lower lot |
+| **Management** | All of the above regardless of the other boxes, plus: unclaim anyone's car, cancel any request at any stage, reopen any completed request |
+
+The two porter areas are independent flags rather than one "porter type", so somebody
+who covers both is a person with both ticked — no third type to invent.
+
+## Areas
+
+Every request belongs to the **510** area or the **lower lot**, decided by the database
+from the two locations:
+
+> If either the origin or the destination is **510** or **525**, it is a 510 job.
+> Otherwise it goes to the lower lot.
+
+A wash stop doesn't affect this — the wash is a waypoint, not an endpoint. The `zone`
+column is `generated always as`, so the app never sends it and cannot get it wrong.
+
+Porters see only their own area's Queue and In Progress; cashiers and managers see both
+via sub-tabs. **The split in the interface is presentation — the refusal is in the
+database.** A 510 porter who never sees a lower lot car in a list can still send the
+claim by hand, so `claim_request` checks the area itself.
 
 **Admin** is John alone and is not a checkbox. Only the admin creates users, sets
 checkboxes, and manages the advisor list. A manager cannot promote themselves.
@@ -25,9 +45,17 @@ months ago.
 
 ## A request
 
-Car code (letters, digits, or both — stored uppercase), a destination of **Drive** or
-**Express**, a service advisor from John's managed list, and an optional note. The
-issuing cashier and timestamp are attached automatically. Every request is colour-coded
+Car code (letters, digits, or both — stored uppercase), an **origin** and a
+**destination** from the five locations — 510, 525, Express, Drive, Wash — an optional
+**stop at the wash on the way**, a service advisor from John's managed list, and an
+optional note. The issuing cashier and timestamp are attached automatically.
+
+Origin and destination may be the same location; a car can be moved within one, and
+refusing that would only make cashiers lie to the form. The wash stop is stored
+separately from the destination because "drive → wash" and "drive → wash → express" are
+different journeys, and only the second has somewhere to be afterwards. Ticking it when
+the wash is already an endpoint is ignored rather than rejected — the intent is
+unambiguous either way. Every request is colour-coded
 by advisor, always shown alongside the advisor's name — never colour alone, because
 roughly 1 in 12 men cannot reliably distinguish some of these.
 

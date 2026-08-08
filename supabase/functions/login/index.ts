@@ -192,7 +192,7 @@ Deno.serve(async (req) => {
   // are cosmetic, and every action is re-checked by the database.
   const { data: profile } = await admin
     .from("users")
-    .select("id, name, can_issue, can_claim, is_manager, is_admin")
+    .select("id, name, can_issue, can_claim_510, can_claim_lower, is_manager, is_admin")
     .eq("id", userId)
     .single();
 

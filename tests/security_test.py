@@ -39,6 +39,7 @@ KEY = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_rJEFL4ZmSL_fWJ2
 TEST_ACCOUNTS = {
     "porter":   "11111111",
     "porter2":  "22222222",
+    "lower":    "55555555",
     "cashier":  "33333333",
     "manager":  "44444444",
 }
@@ -56,7 +57,8 @@ TABLES = [
 SECRET_TABLES = ["user_codes", "login_attempts"]
 
 OPERATIONS = [
-    ("create_request",   {"p_car_code": "TEST1", "p_destination": "drive",
+    ("create_request",   {"p_car_code": "TEST1", "p_origin": "510",
+                          "p_destination": "drive",
                           "p_advisor_id": "00000000-0000-0000-0000-000000000000"}),
     ("claim_request",    {"p_id": "00000000-0000-0000-0000-000000000000"}),
     ("unclaim_request",  {"p_id": "00000000-0000-0000-0000-000000000000"}),
@@ -192,7 +194,8 @@ def phase_b():
     print("\n Capabilities are enforced by the database, not by hidden buttons:")
     if porter:
         status, body = request("/rest/v1/rpc/create_request", "POST",
-                               {"p_car_code": "X1", "p_destination": "drive",
+                               {"p_car_code": "X1", "p_origin": "510",
+                                "p_destination": "drive",
                                 "p_advisor_id": "00000000-0000-0000-0000-000000000000"},
                                token=porter)
         check("porter issues a request", status >= 400, f"HTTP {status}")
@@ -229,8 +232,11 @@ def phase_b():
         return
     aid = advisors[0]["id"]
 
+    # Origin 510 makes this a 510 job, so both test porters are entitled to it —
+    # otherwise the race below would be decided by area, not by the race.
     status, req = request("/rest/v1/rpc/create_request", "POST",
-                          {"p_car_code": "RACE1", "p_destination": "express",
+                          {"p_car_code": "RACE1", "p_origin": "510",
+                           "p_destination": "express",
                            "p_advisor_id": aid}, token=cashier)
     if status != 200:
         check("create a request to race on", False, f"HTTP {status}")
@@ -258,8 +264,8 @@ def phase_b():
     check("other porter unclaims it", s4 >= 400, f"HTTP {s4}")
 
     s5, _ = request("/rest/v1/rpc/edit_request", "POST",
-                    {"p_id": rid, "p_car_code": "EDITED", "p_destination": "drive",
-                     "p_advisor_id": aid}, token=cashier)
+                    {"p_id": rid, "p_car_code": "EDITED", "p_origin": "510",
+                     "p_destination": "drive", "p_advisor_id": aid}, token=cashier)
     check("issuing cashier edits it after it was claimed", s5 >= 400, f"HTTP {s5}")
 
     print("\n Reopening is limited to your own delivery:")
@@ -278,6 +284,58 @@ def phase_b():
 
     # Leave nothing behind in the queue.
     request("/rest/v1/rpc/cancel_request", "POST", {"p_id": rid}, token=manager or cashier)
+
+    # --- Porter areas -------------------------------------------------------
+    # The two queues are separated in the interface, but that is presentation. A
+    # 510 porter who never sees a lower lot car in a list can still send the
+    # claim by hand, so the refusal has to come from the database.
+    print("\n A porter's area is enforced, not just filtered out of the list:")
+    lower = tokens.get("lower")
+    if not lower:
+        check("lower lot porter available", False, "no 'lower' test account")
+        return
+
+    # drive -> express: neither end is 510 or 525, so this is a lower lot job.
+    status, req2 = request("/rest/v1/rpc/create_request", "POST",
+                           {"p_car_code": "LOWER1", "p_origin": "drive",
+                            "p_destination": "express", "p_advisor_id": aid}, token=cashier)
+    if status != 200:
+        check("create a lower lot request", False, f"HTTP {status}")
+        return
+    r2 = req2["id"] if isinstance(req2, dict) else req2[0]["id"]
+    zone2 = (req2 if isinstance(req2, dict) else req2[0]).get("zone")
+    check("drive to express is routed to the lower lot", zone2 == "lower_lot", f"zone={zone2}")
+
+    sa, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=porter)
+    check("510 porter claims a lower lot car", sa == 403, f"HTTP {sa}")
+
+    sb, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=lower)
+    check("lower lot porter claims it", sb == 200, f"HTTP {sb}")
+
+    # And the reverse: a lower lot porter must not take a 510 job.
+    status, req3 = request("/rest/v1/rpc/create_request", "POST",
+                           {"p_car_code": "UPPER1", "p_origin": "525",
+                            "p_destination": "wash", "p_advisor_id": aid}, token=cashier)
+    if status == 200:
+        r3 = req3["id"] if isinstance(req3, dict) else req3[0]["id"]
+        zone3 = (req3 if isinstance(req3, dict) else req3[0]).get("zone")
+        check("525 to wash is routed to 510", zone3 == "510", f"zone={zone3}")
+
+        sc, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r3}, token=lower)
+        check("lower lot porter claims a 510 car", sc == 403, f"HTTP {sc}")
+
+        sd, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r3}, token=porter)
+        check("510 porter claims it", sd == 200, f"HTTP {sd}")
+
+        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": r3}, token=manager)
+
+    # A manager works both areas.
+    if manager:
+        se, _ = request("/rest/v1/rpc/unclaim_request", "POST", {"p_id": r2}, token=manager)
+        sf, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=manager)
+        check("manager claims in either area", sf == 200, f"HTTP {sf}")
+
+    request("/rest/v1/rpc/cancel_request", "POST", {"p_id": r2}, token=manager or cashier)
 
 
 def main():

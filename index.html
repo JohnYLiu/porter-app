@@ -40,8 +40,16 @@
   --silver:    #e8eaed;
   --danger:    #f0656f;
   --ok:        #4ade80;
-  --warn:      #fbbf24;   /* Express */
-  --drive:     #7ab8f5;   /* Drive — deliberately the same visual weight as --warn */
+  --warn:      #fbbf24;
+
+  /* The five locations. 510 and 525 are the two blues on purpose: those are
+     exactly the two that route a job to the 510 porters, so the colour grouping
+     matches the rule. The other three all go to the lower lot. */
+  --loc-510:     #7ab8f5;
+  --loc-525:     #a78bfa;
+  --loc-express: #fbbf24;
+  --loc-drive:   #4ade80;
+  --loc-wash:    #22d3ee;
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
 }
@@ -165,26 +173,53 @@ h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spac
   background: var(--surface-2);
   background: color-mix(in srgb, var(--advisor, var(--surface-2)) 22%, var(--surface-2));
 }
-.card .row1 { display: flex; align-items: baseline; gap: 10px; }
+/* The card is three bands: small metadata top, the car code and its route in
+   the middle, small metadata bottom. The middle band is what a porter reads at
+   a glance from a moving start, so it gets the space and the weight. */
+.card { display: flex; flex-direction: column; min-height: 148px; padding: 12px 14px; }
+.card .row1 { display: flex; align-items: center; gap: 10px; }
+.card .age { margin-left: auto; color: var(--dimmer); font-size: .78rem; white-space: nowrap; }
+
+.card .mid {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 5px;
+  /* Sits the block slightly above true centre, so the route underneath reads as
+     hanging off the code rather than the pair floating in the middle. */
+  padding-bottom: 10px;
+}
 .code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 1.5rem; font-weight: 600; letter-spacing: .06em;
+  font-size: 2.1rem; font-weight: 700; letter-spacing: .07em; line-height: 1.1;
   /* Monospace on purpose: this is the one string a porter reads off a screen
      and matches against a windscreen. O vs 0 and I vs 1 have to be obvious. */
 }
-.card .age { margin-left: auto; color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
-.card .row2 { display: flex; align-items: center; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
 
-/* Drive and Express carry equal urgency — the queue is strictly oldest-first
-   and neither jumps it. Gold against plain grey read as "Express matters more",
-   which is a claim the app should not be making. Two saturated colours of
-   similar weight say "different", not "more important". */
-.badge-dest {
-  font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
-  padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim);
+/* --- Route ---------------------------------------------------------------- */
+.route {
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; flex-wrap: wrap; font-size: .9rem; font-weight: 600;
 }
-.badge-dest.drive   { border-color: #2f4c70; color: var(--drive); }
-.badge-dest.express { border-color: #4a4034; color: var(--warn); }
+.route .arrow { color: var(--dimmer); font-weight: 400; }
+.loc { white-space: nowrap; }
+
+/* Locations are coloured to make the routing rule legible without explaining
+   it: 510 and 525 — the two that send a job to the 510 porters — are the two
+   blues. Everything else, which goes to the lower lot, is a different family.
+   The grouping is doing real work here, not decoration. */
+.loc-510     { color: var(--loc-510); }
+.loc-525     { color: var(--loc-525); }
+.loc-express { color: var(--loc-express); }
+.loc-drive   { color: var(--loc-drive); }
+.loc-wash    { color: var(--loc-wash); }
+
+.card .row3 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: .76rem; color: var(--dimmer); min-height: 16px;
+}
+.card .row3 .porter { margin-left: auto; color: var(--dim); white-space: nowrap; }
+.card .row3 .cardnote {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
 
 /* The advisor's colour NEVER travels alone — the name rides with it every
    time. Roughly 1 in 12 men cannot reliably separate some of these hues, and
@@ -222,13 +257,43 @@ textarea { min-height: 84px; resize: vertical; }
 #car_code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
             font-size: 1.3rem; letter-spacing: .09em; text-transform: uppercase; }
 
-.seg { display: flex; gap: 8px; }
+/* Location pickers. Two columns rather than five across: at 375px, five buttons
+   are 68px each, which is under the comfortable tap target and forces the
+   labels to shrink. Two columns keeps 510/525 paired and Express/Drive paired,
+   which is also how they group in practice. */
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .seg button {
-  flex: 1; min-height: var(--tap); border-radius: 11px;
+  min-height: var(--tap); border-radius: 11px;
   background: var(--surface); border: 1px solid var(--line); color: var(--dim);
-  font-weight: 600; letter-spacing: .03em;
+  font-weight: 650; letter-spacing: .03em;
 }
 .seg button[aria-pressed="true"] { background: var(--silver); color: #000; border-color: var(--silver); }
+/* Wash is the fifth and least used, so it takes the full width on its own row
+   rather than leaving a hole in the grid. */
+.seg button.wide { grid-column: 1 / -1; }
+
+/* Sub-tabs for the two porter areas. */
+.zonebar { display: flex; gap: 6px; margin: 0 0 14px; }
+.zonebar button {
+  flex: 1; min-height: 42px; border-radius: 10px; font-size: .88rem; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--line); color: var(--dimmer);
+}
+.zonebar button[aria-current="true"] {
+  background: var(--surface-2); color: var(--text); border-color: #3a4049;
+}
+.zonebar .n { font-size: .78rem; color: var(--dimmer); margin-left: 5px; }
+.zonebar button[aria-current="true"] .n { color: var(--dim); }
+
+.checkrow {
+  display: flex; align-items: center; gap: 12px; margin-top: 18px;
+  min-height: var(--tap); padding: 10px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
+}
+.checkrow input { width: 22px; height: 22px; accent-color: var(--loc-wash); flex: none; }
+.checkrow label { margin: 0; text-transform: none; letter-spacing: 0;
+                  font-size: .95rem; color: var(--text); }
+.checkrow.disabled { opacity: .45; }
+.checkhint { color: var(--dimmer); font-size: .78rem; margin: 7px 2px 0; }
 
 .btn {
   display: block; width: 100%; min-height: 56px; border-radius: 12px;
@@ -353,6 +418,7 @@ let session = null;      // { access_token, refresh_token, expires_at, user, log
 let advisors = [];
 let requests = [];
 let tab = "queue";
+let zone = "510";        // which area sub-tab is showing in Queue / In Progress
 let poller = null;
 let lastFetchOk = true;
 
@@ -365,9 +431,58 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
-const canClaim  = () => !!session?.user && (session.user.can_claim  || session.user.is_manager);
-const canIssue  = () => !!session?.user && (session.user.can_issue  || session.user.is_manager);
 const isManager = () => !!session?.user && session.user.is_manager;
+const canIssue  = () => !!session?.user && (session.user.can_issue || session.user.is_manager);
+const canClaim  = () => canClaimZone("510") || canClaimZone("lower_lot");
+
+// Mirrors app_can_claim_zone() in db/schema.sql. That one is the authority —
+// this only decides what to draw. Every claim is re-checked by the database.
+function canClaimZone(zone) {
+  const u = session?.user;
+  if (!u) return false;
+  if (u.is_manager) return true;
+  return zone === "510" ? !!u.can_claim_510 : !!u.can_claim_lower;
+}
+
+/* The five locations, in the order cashiers use them. The first four are the
+   common ones; wash is the tail. */
+const LOCATIONS = [
+  { id: "510",     label: "510" },
+  { id: "525",     label: "525" },
+  { id: "express", label: "Express" },
+  { id: "drive",   label: "Drive" },
+  { id: "wash",    label: "Wash" },
+];
+const LOC_LABEL = Object.fromEntries(LOCATIONS.map(l => [l.id, l.label]));
+
+const ZONES = [
+  { id: "510",       label: "510" },
+  { id: "lower_lot", label: "Lower Lot" },
+];
+
+// Which area sub-tabs this person gets. Porters see only where they work;
+// cashiers and managers see both, because they need the whole picture.
+function visibleZones() {
+  const u = session?.user;
+  if (!u) return [];
+  if (u.is_manager || u.can_issue || u.is_admin) return ZONES;
+  const mine = ZONES.filter(z => canClaimZone(z.id));
+  return mine.length ? mine : ZONES;   // view-only staff still see both
+}
+
+/* Renders "510 → Wash → Express".
+ *
+ * The wash stop is a WAYPOINT, not a destination — that is the whole reason
+ * via_wash exists separately. Guarded anyway: the database refuses to set it
+ * when an end of the journey is already the wash, so "Wash → Wash" cannot
+ * arrive here, but rendering should not depend on that holding. */
+function routeHtml(r) {
+  const steps = [r.origin, ...(r.via_wash && r.origin !== "wash" && r.destination !== "wash"
+                               ? ["wash"] : []), r.destination];
+  return steps
+    .map(s => `<span class="loc loc-${esc(s)}">${esc(LOC_LABEL[s] || s)}</span>`)
+    .join('<span class="arrow">→</span>');
+}
 
 function roleLabel(u) {
   const parts = [];
@@ -375,7 +490,12 @@ function roleLabel(u) {
   if (u.is_manager) parts.push("Manager");
   if (!u.is_manager) {
     if (u.can_issue) parts.push("Cashier");
-    if (u.can_claim) parts.push("Porter");
+    // Name the area, since it decides what they can pick up. A porter seeing a
+    // short queue should be able to tell at a glance whether that is because
+    // work is slow or because they are looking at the wrong half of the site.
+    if (u.can_claim_510 && u.can_claim_lower) parts.push("Porter · 510 + Lower Lot");
+    else if (u.can_claim_510)   parts.push("510 Porter");
+    else if (u.can_claim_lower) parts.push("Lower Lot Porter");
   }
   return parts.join(" · ") || "No permissions";
 }
@@ -558,10 +678,16 @@ function renderTabs() {
   const list = tabsFor();
   if (!list.some(t => t.id === tab)) tab = list[0].id;
 
+  // The queue badge counts every area this person can see, not just the sub-tab
+  // they happen to be looking at — otherwise a cashier on the 510 tab would see
+  // "3" while five cars waited.
+  const mineZones = visibleZones().map(z => z.id);
+  const waiting = byStatus("unclaimed").filter(r => mineZones.includes(r.zone)).length;
+
   $("tabs").innerHTML = list.map(t => {
     let badge = "";
-    if (t.id === "queue" && byStatus("unclaimed").length)
-      badge = `<span class="badge">${byStatus("unclaimed").length}</span>`;
+    if (t.id === "queue" && waiting)
+      badge = `<span class="badge">${waiting}</span>`;
     if (t.id === "mycar" && myClaims().length)
       badge = `<span class="badge">${myClaims().length}</span>`;
     return `<button data-tab="${t.id}" aria-current="${t.id === tab}">
@@ -575,19 +701,49 @@ function renderTabs() {
 
 function card(r, opts = {}) {
   const color = r.advisor?.color || "#555";
+  const porter = r.claimer?.name ? `<span class="porter">${esc(r.claimer.name)}</span>` : "";
+  const bottom = r.note
+    ? `<span class="cardnote">${esc(r.note)}</span>`
+    : (opts.meta ? `<span class="cardnote">${esc(opts.meta)}</span>` : "");
+
   return `
     <button class="card" data-id="${r.id}" style="--advisor:${esc(color)}">
       <div class="row1">
-        <span class="code">${esc(r.car_code)}</span>
+        <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
         <span class="age">${esc(opts.time || ago(r.created_at))}</span>
       </div>
-      <div class="row2">
-        <span class="badge-dest ${r.destination}">${esc(r.destination)}</span>
-        <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
+      <div class="mid">
+        <div class="code">${esc(r.car_code)}</div>
+        <div class="route">${routeHtml(r)}</div>
       </div>
-      ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
-      ${opts.meta ? `<div class="meta">${esc(opts.meta)}</div>` : ""}
+      <div class="row3">${bottom}${porter}</div>
     </button>`;
+}
+
+/* The area sub-tabs above the Queue and In Progress lists.
+   Drawn only when there is a choice to make — a porter who works one area gets
+   no switcher, because there is nothing to switch to. */
+function zoneBar(counts) {
+  const zones = visibleZones();
+  if (zones.length < 2) return "";
+  if (!zones.some(z => z.id === zone)) zone = zones[0].id;
+  return `<div class="zonebar">` + zones.map(z =>
+    `<button data-zone="${z.id}" aria-current="${z.id === zone}">${esc(z.label)}` +
+    (counts[z.id] ? `<span class="n">${counts[z.id]}</span>` : "") +
+    `</button>`).join("") + `</div>`;
+}
+
+// Requests in the area currently being viewed. A porter with one area sees
+// theirs; anyone with both sees whichever sub-tab is selected.
+function inZone(list) {
+  const zones = visibleZones();
+  const active = zones.some(z => z.id === zone) ? zone : zones[0]?.id;
+  return list.filter(r => r.zone === active);
+}
+
+function bindZoneBar() {
+  $("view").querySelectorAll("[data-zone]").forEach(b =>
+    b.onclick = () => { zone = b.dataset.zone; render(); });
 }
 
 function empty(icon, title, sub = "") {
@@ -600,13 +756,16 @@ function render() {
   const v = $("view");
 
   if (tab === "queue") {
-    // Strictly oldest first. Drive and Express carry equal urgency, so nothing
-    // jumps the queue — the top card is always the longest wait.
-    const open = byStatus("unclaimed");
-    v.innerHTML = `<h2 class="title">Unclaimed</h2>` +
+    // Strictly oldest first. No location or route jumps the queue — the top
+    // card is always the longest wait.
+    const all = byStatus("unclaimed");
+    const counts = Object.fromEntries(ZONES.map(z => [z.id, all.filter(r => r.zone === z.id).length]));
+    const open = inZone(all);
+    v.innerHTML = `<h2 class="title">Unclaimed</h2>` + zoneBar(counts) +
       (open.length
         ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` + open.map(r => card(r)).join("")
-        : empty("✓", "Nothing waiting", "Every car has been picked up."));
+        : empty("✓", "Nothing waiting", "Every car in this area has been picked up."));
+    bindZoneBar();
   }
 
   else if (tab === "mycar") {
@@ -620,15 +779,15 @@ function render() {
   }
 
   else if (tab === "progress") {
-    const live = byStatus("claimed");
-    v.innerHTML = `<h2 class="title">In Progress</h2>` +
+    const all = byStatus("claimed");
+    const counts = Object.fromEntries(ZONES.map(z => [z.id, all.filter(r => r.zone === z.id).length]));
+    const live = inZone(all);
+    v.innerHTML = `<h2 class="title">In Progress</h2>` + zoneBar(counts) +
       (live.length
         ? `<p class="sub">${live.length} being delivered right now.</p>` +
-          live.map(r => card(r, {
-            time: "claimed " + ago(r.claimed_at),
-            meta: "Porter: " + (r.claimer?.name || "—"),
-          })).join("")
-        : empty("◷", "Nothing in progress"));
+          live.map(r => card(r, { time: "claimed " + ago(r.claimed_at) })).join("")
+        : empty("◷", "Nothing in progress in this area"));
+    bindZoneBar();
   }
 
   else if (tab === "issue") renderIssue();
@@ -638,38 +797,100 @@ function render() {
 }
 
 /* --- Issue --------------------------------------------------------------- */
-let issueDest = "drive";
+let issueOrigin = null;
+let issueDest   = null;
+let issueWash   = false;
+
+// Mirrors the generated `zone` column in db/schema.sql. Shown to the cashier so
+// they can see who the request is about to go to before they send it — the
+// routing is otherwise invisible, and a cashier who picks the wrong location
+// would have no way of noticing.
+const zoneFor = (o, d) =>
+  (["510", "525"].includes(o) || ["510", "525"].includes(d)) ? "510" : "lower_lot";
+
+function locButtons(kind, selected) {
+  return LOCATIONS.map(l =>
+    `<button data-${kind}="${l.id}" aria-pressed="${l.id === selected}"` +
+    `${l.id === "wash" ? ' class="wide"' : ""}>${esc(l.label)}</button>`).join("");
+}
 
 function renderIssue() {
+  // A wash stop is meaningless if the wash is already an end of the journey.
+  const washNA = issueOrigin === "wash" || issueDest === "wash";
+
   $("view").innerHTML = `
     <h2 class="title">Issue a Request</h2>
+
     <label for="car_code">Car code</label>
     <input id="car_code" type="text" autocomplete="off" autocapitalize="characters"
            spellcheck="false" maxlength="20" placeholder="e.g. A4821">
-    <label>Destination</label>
-    <div class="seg">
-      <button data-dest="drive"   aria-pressed="${issueDest === "drive"}">Drive</button>
-      <button data-dest="express" aria-pressed="${issueDest === "express"}">Express</button>
+
+    <label>Pick up from</label>
+    <div class="seg" id="segOrigin">${locButtons("origin", issueOrigin)}</div>
+
+    <label>Take to</label>
+    <div class="seg" id="segDest">${locButtons("dest", issueDest)}</div>
+
+    <div class="checkrow ${washNA ? "disabled" : ""}">
+      <input type="checkbox" id="viaWash" ${issueWash && !washNA ? "checked" : ""}
+             ${washNA ? "disabled" : ""}>
+      <label for="viaWash">Stop at the wash on the way</label>
     </div>
+    ${washNA ? `<p class="checkhint">The wash is already one end of this trip.</p>` : ""}
+
+    <div id="routePreview"></div>
+
     <label for="advisor">Service advisor</label>
     <select id="advisor">
       <option value="">Choose an advisor…</option>
       ${advisors.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}
     </select>
+
     <label for="note">Note <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
     <textarea id="note" maxlength="500" placeholder="Customer name, bay number…"></textarea>
+
     <button class="btn primary" id="submitReq">Send to porters</button>
     <div id="issueMsg"></div>`;
 
-  // Toggle in place rather than re-rendering. Rebuilding the form here would
-  // blank the car code, advisor and note the cashier has already typed —
-  // and picking the destination after typing the code is the natural order.
-  $("view").querySelectorAll("[data-dest]").forEach(b => b.onclick = () => {
-    issueDest = b.dataset.dest;
-    $("view").querySelectorAll("[data-dest]").forEach(x =>
-      x.setAttribute("aria-pressed", String(x.dataset.dest === issueDest)));
-  });
+  // Everything below updates the form IN PLACE. Re-rendering on each tap would
+  // blank the car code, advisor and note the cashier has already typed, and
+  // picking locations after typing the code is the natural order.
+  const paint = () => {
+    $("segOrigin").querySelectorAll("[data-origin]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.origin === issueOrigin)));
+    $("segDest").querySelectorAll("[data-dest]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.dest === issueDest)));
+
+    const na = issueOrigin === "wash" || issueDest === "wash";
+    const box = $("viaWash");
+    box.disabled = na;
+    if (na) { issueWash = false; box.checked = false; }
+    box.closest(".checkrow").classList.toggle("disabled", na);
+
+    if (issueOrigin && issueDest) {
+      const z = zoneFor(issueOrigin, issueDest);
+      $("routePreview").innerHTML =
+        `<div class="msg info" style="text-align:center">
+           <div class="route" style="font-size:1rem">
+             ${routeHtml({ origin: issueOrigin, destination: issueDest, via_wash: issueWash })}
+           </div>
+           <div style="font-size:.78rem;margin-top:7px;color:var(--dimmer)">
+             Goes to ${z === "510" ? "510" : "Lower Lot"} porters
+           </div>
+         </div>`;
+    } else {
+      $("routePreview").innerHTML = "";
+    }
+  };
+
+  $("segOrigin").querySelectorAll("[data-origin]").forEach(b =>
+    b.onclick = () => { issueOrigin = b.dataset.origin; paint(); });
+  $("segDest").querySelectorAll("[data-dest]").forEach(b =>
+    b.onclick = () => { issueDest = b.dataset.dest; paint(); });
+  $("viaWash").onchange = (e) => { issueWash = e.target.checked; paint(); };
   $("submitReq").onclick = submitRequest;
+
+  paint();
 }
 
 async function submitRequest() {
@@ -679,19 +900,29 @@ async function submitRequest() {
   const msg = $("issueMsg");
   msg.innerHTML = "";
 
-  if (!code)    { msg.innerHTML = `<div class="msg err">Enter the car code.</div>`; return; }
-  if (!advisor) { msg.innerHTML = `<div class="msg err">Choose a service advisor.</div>`; return; }
+  const fail = (t) => { msg.innerHTML = `<div class="msg err">${esc(t)}</div>`; };
+  if (!code)        return fail("Enter the car code.");
+  if (!issueOrigin) return fail("Choose where the car is now.");
+  if (!issueDest)   return fail("Choose where it needs to go.");
+  if (!advisor)     return fail("Choose a service advisor.");
 
   const btn = $("submitReq");
   btn.disabled = true; btn.textContent = "Sending…";
   try {
     await api("/rest/v1/rpc/create_request", { method: "POST", body: {
-      p_car_code: code, p_destination: issueDest, p_advisor_id: advisor, p_note: note || null,
+      p_car_code: code,
+      p_origin: issueOrigin,
+      p_destination: issueDest,
+      p_via_wash: issueWash,
+      p_advisor_id: advisor,
+      p_note: note || null,
     }});
+    const sentTo = zoneFor(issueOrigin, issueDest) === "510" ? "510" : "Lower Lot";
     await loadRequests();
-    issueDest = "drive";
+    issueOrigin = null; issueDest = null; issueWash = false;
     renderIssue();
-    $("issueMsg").innerHTML = `<div class="msg ok">${esc(code.toUpperCase())} sent to the porters.</div>`;
+    $("issueMsg").innerHTML =
+      `<div class="msg ok">${esc(code.toUpperCase())} sent to the ${sentTo} porters.</div>`;
   } catch (e) {
     msg.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
   } finally {
@@ -873,12 +1104,15 @@ function renderDetail(message = "") {
       <span class="detail-code">${esc(r.car_code)}</span>
       <span class="status-pill ${r.status}">${esc(r.status)}</span>
     </div>
-    <div class="row2" style="display:flex;gap:8px;margin-top:12px;align-items:center;--advisor:${esc(color)}">
-      <span class="badge-dest ${r.destination}">${esc(r.destination)}</span>
+    <div class="route" style="justify-content:flex-start;margin-top:10px;font-size:1.05rem">
+      ${routeHtml(r)}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center;--advisor:${esc(color)}">
       <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
     </div>
     ${r.note ? `<div class="msg info" style="margin-top:14px">${esc(r.note)}</div>` : ""}
     <dl>
+      <div class="kv"><dt>Area</dt><dd>${r.zone === "510" ? "510" : "Lower Lot"}</dd></div>
       <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
       <div class="kv"><dt>Requested</dt><dd>${esc(dayAndClock(r.created_at))} · ${esc(ago(r.created_at))}</dd></div>
       ${r.claimed_at ? `<div class="kv"><dt>Claimed by</dt><dd>${esc(r.claimer?.name || "—")} at ${esc(clock(r.claimed_at))}</dd></div>` : ""}
