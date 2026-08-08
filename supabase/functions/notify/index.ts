@@ -157,9 +157,14 @@ function describe(row: Record<string, unknown>) {
   const legs = [stop(row.origin)];
   if (row.via_wash && row.origin !== "wash" && row.destination !== "wash") legs.push("Wash");
   legs.push(stop(row.destination));
+  // ASCII "->" rather than the arrow character. U+2192 is three bytes in UTF-8,
+  // and iOS decoded them one byte at a time — "Drive ,Üí Lower Lot" on the lock
+  // screen. Nothing on this side is wrong, and nothing on this side can fix it,
+  // so the notification stays within ASCII. The app's own route display keeps
+  // the real arrow, where it renders correctly.
   return {
     title: String(row.car_code ?? "New car request"),
-    body: legs.join(" → "),
+    body: legs.join(" -> "),
   };
 }
 
