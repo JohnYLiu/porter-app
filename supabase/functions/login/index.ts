@@ -89,6 +89,19 @@ Deno.serve(async (req) => {
     return json({ error: "Login is misconfigured" }, 500);
   }
 
+  // Which key is this actually using? Reported once per call, because a key of
+  // the wrong KIND still works for some operations and not others, which is a
+  // very confusing way to fail. Only the prefix is logged — never key material.
+  {
+    const fromServiceRole = !!Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const kind = SECRET.startsWith("sb_secret_")      ? "sb_secret_ (new-style secret)"
+               : SECRET.startsWith("sb_publishable_") ? "sb_publishable_ — THIS IS THE WRONG KEY"
+               : SECRET.startsWith("eyJ")             ? "legacy JWT"
+               : "unrecognised";
+    console.log(`auth key: ${kind}, from ${fromServiceRole
+      ? "SUPABASE_SERVICE_ROLE_KEY" : "PORTER_SECRET_KEY"}`);
+  }
+
   const admin = createClient(URL, SECRET, { auth: { persistSession: false } });
 
   let code = "";
