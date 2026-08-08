@@ -16,7 +16,9 @@
  *
  * Bump CACHE to force old caches out.
  */
-const CACHE = "porter-v1";
+/* Bump this on any change to the shell. Changing this file at all is also what
+ * tells the browser a new worker exists, which is half of how updates ship. */
+const CACHE = "porter-v2";
 
 const SHELL = [
   "./",
@@ -48,8 +50,18 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
   if (e.request.method !== "GET") return;
 
+  // `cache: "reload"` bypasses the browser's OWN http cache before going out.
+  //
+  // Without it, "network-first" is a lie: GitHub Pages sends max-age=600, so
+  // this fetch could be answered from a ten-minute-old copy sitting in Safari's
+  // cache, and a shipped update would look like it never happened. That is
+  // exactly what it did — the app was network-first and still serving stale
+  // code on iOS.
+  //
+  // This adds no extra requests, since network-first already went out every
+  // time. It only stops the http cache short-circuiting the trip.
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request.url, { cache: "reload", credentials: "same-origin" })
       .then(res => {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));

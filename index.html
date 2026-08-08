@@ -909,8 +909,46 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && se
 loadSession();
 if (session) start().catch(signOut); else $("login").hidden = false;
 
+/* Shipping updates to a phone that has this on its Home Screen.
+ *
+ * An installed iOS web app that is merely backgrounded does not re-navigate
+ * when you tap the icon — it restores the page it already had. So a porter can
+ * be running week-old code indefinitely and have no way of knowing, and no
+ * reason to force-quit. That has to be handled here rather than in a runbook
+ * step nobody will follow.
+ *
+ * Check for a new worker on launch and every time the app comes back to the
+ * foreground; when one takes over, reload once so the new code is actually
+ * what the porter is looking at.
+ */
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  let reloading = false;
+
+  navigator.serviceWorker.register("sw.js").then(reg => {
+    reg.update();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) reg.update();
+    });
+
+    reg.addEventListener("updatefound", () => {
+      const incoming = reg.installing;
+      if (!incoming) return;
+
+      // Read the controller HERE, not at page load. A page that loaded before
+      // any worker existed would have captured "no controller" and then
+      // suppressed every real update for the rest of its life. Checked at this
+      // moment it means what it should: no controller = first install, so
+      // there is nothing to replace and nothing to reload for.
+      if (!navigator.serviceWorker.controller) return;
+
+      incoming.addEventListener("statechange", () => {
+        if (incoming.state === "activated" && !reloading) {
+          reloading = true;
+          location.reload();
+        }
+      });
+    });
+  }).catch(() => {});
 }
 </script>
 </body>
