@@ -365,7 +365,24 @@ dl { margin: 16px 0 22px; }
 }
 .arow.inactive { opacity: .5; }
 .arow .top { display: flex; align-items: center; gap: 10px; }
+
+/* Staff rows put the name on its own line above the buttons. Sharing a line
+   with "Reset code" and "Deactivate" left roughly 130px for a name, so "Test
+   Porter Two" broke onto three lines — and real names are longer than that. */
+.arow .top.stacked { flex-wrap: wrap; }
+.arow .top.stacked .namecell { flex: 1 0 100%; min-width: 0; }
 .arow .nm { font-weight: 600; flex: 1; min-width: 0; }
+
+/* The name is editable, so it has to look editable. A tappable thing that
+   looks like plain text is a feature nobody finds. */
+.nameedit {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0; text-align: left; color: var(--text); font-weight: 600;
+}
+.nameedit .pencil { color: var(--dimmer); font-size: .82rem; }
+.nameedit:active .pencil { color: var(--text); }
+.renaming { display: flex; gap: 8px; align-items: center; width: 100%; }
+.renaming input { flex: 1; min-width: 0; min-height: 44px; }
 .arow .sub2 { color: var(--dimmer); font-size: .76rem; margin-top: 2px; }
 
 /* Permission toggles. Big enough to hit with a thumb, and labelled — an
@@ -1295,10 +1312,11 @@ function adminStaff() {
     <div id="newUser"></div>
     <div id="codeShown"></div>
     ${shown.map(u => `
-      <div class="arow ${u.active ? "" : "inactive"}">
-        <div class="top">
-          <div style="flex:1;min-width:0">
-            <div class="nm">${esc(u.name)}${u.is_admin ? " · Admin" : ""}</div>
+      <div class="arow ${u.active ? "" : "inactive"}" data-row="${u.id}">
+        <div class="top stacked">
+          <div class="namecell">
+            <button class="nm nameedit" data-rename="${u.id}">${esc(u.name)}${
+              u.is_admin ? " · Admin" : ""}<span class="pencil">✎</span></button>
             <div class="sub2">${esc(roleLabel(u))}${u.active ? "" : " · deactivated"}</div>
           </div>
           <button class="abtn" data-reset="${u.id}">Reset code</button>
@@ -1336,7 +1354,57 @@ function adminStaff() {
       await adminCall({ action: "reset_code", user_id: u.id });
     });
 
+  $("adminBody").querySelectorAll("[data-rename]").forEach(b =>
+    b.onclick = () => startRename(adminUsers.find(x => x.id === b.dataset.rename)));
+
   $("addUser").onclick = showAddUser;
+}
+
+/* Rename in place, within the row, rather than through a prompt box.
+ *
+ * The name is what appears on every car this person ever handles, so it is
+ * worth being able to see and correct properly. Editing is contained to one
+ * row; the admin tab is excluded from the poll, so nothing rebuilds underneath
+ * it mid-edit. */
+function startRename(u) {
+  const row = document.querySelector(`[data-row="${u.id}"] .top`);
+  if (!row) return;
+
+  row.innerHTML = `
+    <div class="renaming">
+      <input type="text" id="renameInput" maxlength="60" value="${esc(u.name)}">
+      <button class="abtn" id="renameSave">Save</button>
+      <button class="abtn" id="renameCancel">Cancel</button>
+    </div>`;
+
+  const input = $("renameInput");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+
+  const cancel = () => renderAdminSection();
+  $("renameCancel").onclick = cancel;
+
+  const save = async () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    if (name === u.name) return cancel();
+
+    // Two people with the same name merge in the history filters, which is a
+    // real loss of information. Allowed anyway — dealerships genuinely have two
+    // Mikes — but said out loud rather than discovered later.
+    const clash = adminUsers.find(x => x.id !== u.id && x.name === name);
+    if (clash && !confirm(
+        `Somebody else is already called "${name}".\n\n` +
+        `They will be impossible to tell apart in the history filters. Continue?`)) return;
+
+    await adminWrite(`/rest/v1/users?id=eq.${u.id}`, "PATCH", { name });
+  };
+
+  $("renameSave").onclick = save;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter")  save();
+    if (e.key === "Escape") cancel();
+  };
 }
 
 /* --- Deactivated --------------------------------------------------------- */
