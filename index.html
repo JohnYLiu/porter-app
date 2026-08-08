@@ -1123,7 +1123,6 @@ let adminUsers   = [];
 let adminAdvs    = [];          // includes retired ones
 let adminHistory = [];
 let adminRange   = "30d";
-let showRetiredStaff = false;
 let adminBusy    = false;
 
 const RANGES = [
@@ -1174,9 +1173,10 @@ function humanMins(v) {
 
 function renderAdmin() {
   const sections = [
-    { id: "staff",    label: "Staff" },
-    { id: "advisors", label: "Advisors" },
-    { id: "history",  label: "History" },
+    { id: "staff",       label: "Staff" },
+    { id: "deactivated", label: "Inactive" },
+    { id: "advisors",    label: "Advisors" },
+    { id: "history",     label: "History" },
   ];
   $("view").innerHTML = `
     <h2 class="title">Admin</h2>
@@ -1196,10 +1196,15 @@ function renderAdmin() {
       $("adminBody").innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
       return;
     }
-    if (adminSection === "staff")    adminStaff();
-    if (adminSection === "advisors") adminAdvisors();
-    if (adminSection === "history")  adminHistoryView();
+    renderAdminSection();
   })();
+}
+
+function renderAdminSection() {
+  if (adminSection === "staff")            adminStaff();
+  else if (adminSection === "deactivated") adminDeactivated();
+  else if (adminSection === "advisors")    adminAdvisors();
+  else                                     adminHistoryView();
 }
 
 /* --- Staff --------------------------------------------------------------- */
@@ -1211,19 +1216,15 @@ function adminStaff() {
       ${esc(label)}
     </label>`;
 
-  // Deactivated people are hidden by default. They are kept forever so their
-  // name stays on the cars they moved, but that is a reason to keep the ROW,
-  // not a reason to make John scroll past it every day.
-  const gone = adminUsers.filter(u => !u.active);
-  const shown = showRetiredStaff ? adminUsers : adminUsers.filter(u => u.active);
+  // Current staff only. Deactivated people keep their row forever so their name
+  // stays on the cars they moved, but they live on their own tab — this is the
+  // list John works from daily, and it should hold only people who can log in.
+  const shown = adminUsers.filter(u => u.active);
 
   $("adminBody").innerHTML = `
     <button class="btn primary" id="addUser" style="margin-bottom:16px">Add someone</button>
     <div id="newUser"></div>
     <div id="codeShown"></div>
-    ${gone.length ? `<button class="abtn" id="toggleRetired" style="margin-bottom:14px">
-        ${showRetiredStaff ? "Hide" : "Show"} ${gone.length} deactivated
-      </button>` : ""}
     ${shown.map(u => `
       <div class="arow ${u.active ? "" : "inactive"}">
         <div class="top">
@@ -1232,13 +1233,8 @@ function adminStaff() {
             <div class="sub2">${esc(roleLabel(u))}${u.active ? "" : " · deactivated"}</div>
           </div>
           <button class="abtn" data-reset="${u.id}">Reset code</button>
-          <button class="abtn ${u.active ? "danger" : ""}" data-active="${u.id}"
-                  data-to="${u.active ? "false" : "true"}"
-                  ${u.is_admin ? "disabled style=opacity:.4" : ""}>
-            ${u.active ? "Deactivate" : "Reactivate"}
-          </button>
-          ${(!u.active && !u.is_admin)
-            ? `<button class="abtn danger" data-remove="${u.id}">Remove</button>` : ""}
+          <button class="abtn danger" data-active="${u.id}" data-to="false"
+                  ${u.is_admin ? "disabled style=opacity:.4" : ""}>Deactivate</button>
         </div>
         <div class="perms">
           ${perm(u, "can_issue", "Issue requests")}
@@ -1259,11 +1255,9 @@ function adminStaff() {
   $("adminBody").querySelectorAll("[data-active]").forEach(b =>
     b.onclick = async () => {
       const u = adminUsers.find(x => x.id === b.dataset.active);
-      // Deactivating is the closest thing here to deleting somebody, and it
-      // takes their login away mid-shift if it is the wrong row.
-      if (u.active && !confirm(`Deactivate ${u.name}? They will not be able to sign in.`)) return;
-      await adminWrite(`/rest/v1/users?id=eq.${u.id}`, "PATCH",
-                       { active: b.dataset.to === "true" });
+      // Deactivating takes somebody's login away mid-shift if it is the wrong row.
+      if (!confirm(`Deactivate ${u.name}? They will not be able to sign in.`)) return;
+      await adminWrite(`/rest/v1/users?id=eq.${u.id}`, "PATCH", { active: false });
     });
 
   $("adminBody").querySelectorAll("[data-reset]").forEach(b =>
@@ -1271,6 +1265,36 @@ function adminStaff() {
       const u = adminUsers.find(x => x.id === b.dataset.reset);
       if (!confirm(`Reset ${u.name}'s code?\n\nTheir current code stops working immediately.`)) return;
       await adminCall({ action: "reset_code", user_id: u.id });
+    });
+
+  $("addUser").onclick = showAddUser;
+}
+
+/* --- Deactivated --------------------------------------------------------- */
+function adminDeactivated() {
+  const gone = adminUsers.filter(u => !u.active);
+
+  $("adminBody").innerHTML = `
+    <p class="sub">Kept so their name stays on the cars they handled.
+       Bring anyone back, or remove them if there is nothing behind them.</p>
+    <div id="codeShown"></div>
+    ${gone.length ? gone.map(u => `
+      <div class="arow inactive">
+        <div class="top">
+          <div style="flex:1;min-width:0">
+            <div class="nm">${esc(u.name)}</div>
+            <div class="sub2">${esc(roleLabel(u))}</div>
+          </div>
+          <button class="abtn" data-active="${u.id}" data-to="true">Reactivate</button>
+          ${u.is_admin ? "" : `<button class="abtn danger" data-remove="${u.id}">Remove</button>`}
+        </div>
+      </div>`).join("")
+    : `<div class="empty"><div class="big">✓</div><div>Nobody is deactivated</div></div>`}`;
+
+  $("adminBody").querySelectorAll("[data-active]").forEach(b =>
+    b.onclick = async () => {
+      const u = adminUsers.find(x => x.id === b.dataset.active);
+      await adminWrite(`/rest/v1/users?id=eq.${u.id}`, "PATCH", { active: true });
     });
 
   $("adminBody").querySelectorAll("[data-remove]").forEach(b =>
@@ -1281,13 +1305,8 @@ function adminStaff() {
           `This deletes the account rather than deactivating it, and cannot be undone.\n\n` +
           `If they have ever issued or moved a car, the database will refuse — their ` +
           `name belongs on those records.`)) return;
-      await adminCall({ action: "delete_user", user_id: u.id }, { silent: true });
+      await adminCall({ action: "delete_user", user_id: u.id });
     });
-
-  if ($("toggleRetired")) {
-    $("toggleRetired").onclick = () => { showRetiredStaff = !showRetiredStaff; adminStaff(); };
-  }
-  $("addUser").onclick = showAddUser;
 }
 
 function showAddUser() {
@@ -1483,14 +1502,14 @@ async function adminWrite(path, method, body) {
       throw new Error("The database refused that change. Are you still signed in as admin?");
     }
     await loadAdmin();
-    if (adminSection === "staff") adminStaff(); else adminAdvisors();
+    renderAdminSection();
   } catch (e) {
     alert(e.message);
     renderAdmin();          // reload from the database rather than trusting the screen
   } finally { adminBusy = false; }
 }
 
-async function adminCall(payload, opts = {}) {
+async function adminCall(payload) {
   if (adminBusy) return;
   adminBusy = true;
   try {
@@ -1507,9 +1526,9 @@ async function adminCall(payload, opts = {}) {
     if (!res.ok) throw new Error(d.error || "That did not work");
 
     await loadAdmin();
-    adminStaff();
+    renderAdminSection();
 
-    if (d.code) {
+    if (d.code && $("codeShown")) {
       // Shown once, deliberately loud. It cannot be recovered afterwards.
       $("codeShown").innerHTML = `
         <div class="codebox">
@@ -1518,7 +1537,7 @@ async function adminCall(payload, opts = {}) {
           <div class="warnline">Write this down now — it cannot be shown again.</div>
         </div>`;
       $("codeShown").scrollIntoView({ behavior: "smooth", block: "center" });
-    } else if (d.removed) {
+    } else if (d.removed && $("codeShown")) {
       $("codeShown").innerHTML =
         `<div class="msg ok">${esc(d.removed)} was removed.</div>`;
     }
