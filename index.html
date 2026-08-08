@@ -138,10 +138,27 @@ header button {
   background: var(--surface-2); color: var(--dim); font-size: .85rem;
 }
 
-main { flex: 1; padding: 16px 16px 24px; }
+/* The bar no longer occupies any space, so this is what keeps the last card
+   clear of it — the bar's own measured height, plus room for the half-circle
+   standing above it. --nav-h is measured off the real element in
+   setNavHeight(), because the height depends on the device's safe-area inset. */
+main { flex: 1; padding: 16px 16px calc(var(--nav-h, 98px) + 58px); }
 
+/* FIXED, not sticky, and that is the bug fix.
+ *
+ * Sticky ties the bar to the document: it only pins to the bottom of the
+ * screen while the document is long enough to scroll, and otherwise it just
+ * sits at the end of the content. So on the tabs whose content does not fill
+ * the screen — Queue, Active, Settings — the bar was landing wherever the app
+ * box happened to end rather than on the bottom of the display, riding up and
+ * taking its half-circle with it. The tabs that scroll, Issue and History,
+ * looked right, because there the pinning actually engaged.
+ *
+ * Fixed takes the document out of it entirely. The bar is on the bottom of the
+ * screen because that is where it is told to be, whatever the tab contains.
+ */
 nav {
-  position: sticky; bottom: 0; z-index: 20;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
   display: flex; gap: 2px;
   padding: 6px 6px calc(6px + var(--safe-bottom));
   background: var(--navbg);
@@ -173,9 +190,6 @@ nav .badge {
  * findable one-handed, with a key tag in the other hand.
  */
 nav.herobar { display: grid; grid-template-columns: 1fr auto 1fr; }
-/* The bump rises 45px above the bar, so the last card in a scrolled list would
-   otherwise finish underneath it. Buy that space back. */
-#app.herobar main { padding-bottom: 58px; }
 nav.herobar .side { display: flex; gap: 2px; min-width: 0; }
 nav.herobar .side > button { flex: 1; }
 
@@ -1266,11 +1280,28 @@ function renderTabs() {
 
   const nav = $("tabs");
   nav.className = "herobar";
-  $("app").classList.add("herobar");
   nav.innerHTML = heroTabs(list, waiting, heroTab());
 
   nav.querySelectorAll("button").forEach(b =>
     b.onclick = () => { tab = b.dataset.tab; render(); });
+
+  setNavHeight();
+}
+
+/* Tell main how much room the fixed bar needs, measured off the bar itself.
+   Not a constant: the height depends on the safe-area inset, which is 34px on
+   a phone with a home indicator and 0 on one without.
+
+   Called from renderTabs rather than watched with a ResizeObserver — an
+   observer held by nothing is free to be collected before it ever reports, and
+   that is exactly what happened: main sat on its fallback padding. Here it runs
+   immediately after the markup that decides the height, which is the only
+   moment it can change. */
+function setNavHeight() {
+  const h = $("tabs").offsetHeight;
+  // Zero while the app is still hidden behind the sign-in screen. Writing that
+  // would collapse main's padding until the next render.
+  if (h > 0) document.documentElement.style.setProperty("--nav-h", h + "px");
 }
 
 // One flat tab. Used as-is by the cashier bar, and for everything either side
@@ -2836,6 +2867,8 @@ serviceWorkerVersion().then(async (v) => {
     setTimeout(read, 350);        // once the rotation has settled
   });
 })();
+
+addEventListener("resize", setNavHeight);
 
 loadSession();
 if (session) start().catch(() => signOut()); else $("login").hidden = false;
