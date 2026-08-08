@@ -203,12 +203,14 @@ nav.porterbar .hero::before {
 nav.porterbar .hero .ico { font-size: 2.8rem; color: #fff; }
 nav.porterbar .hero .lbl { color: #fff; }
 
-/* Centred on the middle of the visible half-circle — which is 30px above the
-   hero's top edge, given the bar's 6px of padding and its hairline. Centred by
-   translate rather than by a hand-computed offset, so the glyph stays put if
-   its size changes again. */
+/* Sat so the middle of the glyph lands on the bar's top edge, which is 7px
+   above the hero's own top given the bar's 6px of padding and its hairline.
+   The offset is -13 rather than -7 because it is the INK that has to line up,
+   and the three bars of this glyph sit about 6px below the centre of their em
+   box — centring the box would leave the symbol visibly low. Measured, not
+   guessed. */
 nav.porterbar .hero .disc {
-  position: absolute; left: 50%; top: -30px;
+  position: absolute; left: 50%; top: -13px;
   transform: translate(-50%, -50%);
   display: grid; place-items: center;
 }
