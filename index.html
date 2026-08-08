@@ -708,6 +708,15 @@ function loadSession() {
 }
 
 function signOut(reason = "") {
+  // Tell the database to stop notifying this device, BEFORE the session goes —
+  // the delete needs the token. Signing out stopped nothing before this: the
+  // subscription row survived, and login_attempts still showed the person as
+  // signed in today, so they kept counting as on shift and kept being buzzed.
+  //
+  // The browser subscription itself is kept. Signing back in re-claims it
+  // silently, so nobody has to tap "turn on notifications" every morning.
+  releasePushSubscription();
+
   session = null;
   localStorage.removeItem(STORE);
   clearInterval(poller); poller = null;
@@ -869,6 +878,25 @@ async function existingSubscription() {
  * correct fix: throw the old subscription away and make a fresh one, which
  * yields a new endpoint the current user can register. The orphaned row is
  * pruned by the notify function the first time the dead endpoint returns 410. */
+/* Stop this device receiving pushes, without unsubscribing it.
+ *
+ * Fire and forget, with the token captured up front: sign-out must not wait on
+ * the network, and must work identically when it was triggered by a dead
+ * session or a 3am expiry. */
+function releasePushSubscription() {
+  if (!session?.access_token) return;
+  const token = session.access_token;
+  existingSubscription().then((sub) => {
+    if (!sub) return;
+    fetch(`${SUPABASE_URL}/rest/v1/push_subscriptions?endpoint=eq.` +
+          encodeURIComponent(sub.endpoint), {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + token },
+    }).catch(() => {});
+  }).catch(() => {});
+  pushOn = false;
+}
+
 async function syncPush() {
   pushOn = false;
   if (!pushSupported() || !session?.user) return;
@@ -884,6 +912,18 @@ async function syncPush() {
 
   if (Array.isArray(mine) && mine.length) { pushOn = true; return; }
 
+  // No row for this endpoint. Usually because signing out released it, so claim
+  // it back — that restores notifications on sign-in without asking again.
+  try {
+    await api("/rest/v1/push_subscriptions", {
+      method: "POST",
+      body: { user_id: session.user.id, endpoint: sub.endpoint },
+    });
+    pushOn = true;
+    return;
+  } catch { /* 409: this endpoint belongs to somebody else on a shared phone */ }
+
+  // Only then start over, which yields a new endpoint the current user can own.
   try { await sub.unsubscribe(); } catch { /* already gone */ }
   await subscribePush().catch(() => {});
 }
