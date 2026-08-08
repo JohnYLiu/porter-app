@@ -110,6 +110,14 @@ create table if not exists public.users (
 
   is_manager       boolean not null default false,
 
+  -- What this person wants to be told about. Chosen by them in Settings, not
+  -- by an admin: the area flags above say where somebody normally works, which
+  -- is a reasonable starting guess and a bad permanent answer. A porter who
+  -- covers the lower lot on Fridays should be able to say so himself.
+  notify_510       boolean not null default false,
+  notify_lower     boolean not null default false,
+  notify_delivered boolean not null default false,
+
   -- Admin is John, and is not one of the checkboxes. Adding and editing users
   -- is admin-only; managers cannot promote themselves.
   is_admin    boolean     not null default false,
@@ -433,6 +441,24 @@ create unique index if not exists service_advisors_key_char_idx
 
 -- A towed-in car and a tag with no advisor both genuinely have none.
 alter table public.requests alter column advisor_id drop not null;
+
+alter table public.users add column if not exists notify_510       boolean not null default false;
+alter table public.users add column if not exists notify_lower     boolean not null default false;
+alter table public.users add column if not exists notify_delivered boolean not null default false;
+
+-- Seed each person's preferences from what they were already getting, once.
+-- Guarded on "nobody has any set yet" so it cannot overwrite a real choice on a
+-- later run — a porter who deliberately turns everything off must stay off.
+do $$
+begin
+  if not exists (select 1 from public.users
+                  where notify_510 or notify_lower or notify_delivered) then
+    update public.users
+       set notify_510       = can_claim_510,
+           notify_lower     = can_claim_lower,
+           notify_delivered = can_issue;
+  end if;
+end $$;
 
 alter table public.push_subscriptions add column if not exists p256dh text;
 alter table public.push_subscriptions add column if not exists auth   text;
@@ -936,11 +962,28 @@ end;
 $$;
 
 
+-- --- a person sets their own notification preferences ----------------------
+--
+-- Through a function, not a policy. users_admin_update is admin-only for good
+-- reason, and widening it so people could edit their own row would hand
+-- everybody is_admin. This writes exactly three columns, always for the caller,
+-- and cannot touch anything else.
+create or replace function public.set_notification_preferences(
+  p_510 boolean, p_lower boolean, p_delivered boolean)
+returns void
+language sql security definer set search_path = '' as $$
+  update public.users
+     set notify_510       = coalesce(p_510, false),
+         notify_lower     = coalesce(p_lower, false),
+         notify_delivered = coalesce(p_delivered, false)
+   where id = auth.uid() and active;
+$$;
+
+
 -- --- who to notify about a new car -----------------------------------------
 --
--- THIS IS WHAT THE AREA LABELS ARE FOR. They grant nothing — anyone can claim
--- anywhere — but they decide who gets buzzed, which is the difference between
--- an alert people act on and one they mute within a week.
+-- Driven by each person's own choice in Settings, not by the area labels. The
+-- labels seeded the first set of preferences and have no say after that.
 --
 -- "Signed in today" stands in for "on shift". Sessions reset at 3am, so someone
 -- who has not signed in since then is almost certainly not at work, and buzzing
@@ -958,7 +1001,27 @@ language sql stable security definer set search_path = '' as $$
     from public.push_subscriptions ps
     join public.users u on u.id = ps.user_id
    where u.active
-     and case when p_zone = '510' then u.can_claim_510 else u.can_claim_lower end
+     and case when p_zone = '510' then u.notify_510 else u.notify_lower end
+     and exists (
+       select 1 from public.login_attempts la
+        where la.user_id = ps.user_id
+          and la.succeeded
+          and la.at >= public.app_day_start()
+     );
+$$;
+
+-- Who to tell that a car they asked for has arrived: the cashier who issued it,
+-- if they want to hear about it. Same "signed in today" rule — somebody who has
+-- gone home does not need to know a car moved.
+create or replace function public.push_targets_delivered(p_user uuid)
+returns table(endpoint text, p256dh text, auth text)
+language sql stable security definer set search_path = '' as $$
+  select ps.endpoint, ps.p256dh, ps.auth
+    from public.push_subscriptions ps
+    join public.users u on u.id = ps.user_id
+   where ps.user_id = p_user
+     and u.active
+     and u.notify_delivered
      and exists (
        select 1 from public.login_attempts la
         where la.user_id = ps.user_id
@@ -1023,7 +1086,7 @@ begin
 
   perform net.http_post(
     url     := public.notify_url(),
-    body    := jsonb_build_object('record', to_jsonb(new)),
+    body    := jsonb_build_object('record', to_jsonb(new), 'event', 'requested'),
     headers := jsonb_build_object(
                  'Content-Type',    'application/json',
                  'x-notify-secret', v_secret)
@@ -1043,6 +1106,46 @@ drop trigger if exists notify_on_request on public.requests;
 create trigger notify_on_request
   after insert on public.requests
   for each row execute function public.notify_new_request();
+
+
+-- --- and when the car actually arrives -------------------------------------
+--
+-- The cashier who asked for it wants to know it is done, so they can stop
+-- wondering. Fires only on the transition INTO complete: reopening and
+-- completing again would otherwise buzz them twice for one car.
+create or replace function public.notify_request_delivered()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare v_secret text;
+begin
+  select value into v_secret from public.app_secrets where key = 'notify_secret';
+  if v_secret is null then
+    return new;
+  end if;
+
+  perform net.http_post(
+    url     := public.notify_url(),
+    body    := jsonb_build_object('record', to_jsonb(new), 'event', 'delivered'),
+    headers := jsonb_build_object(
+                 'Content-Type',    'application/json',
+                 'x-notify-secret', v_secret)
+  );
+  return new;
+exception when others then
+  -- Same rule as issuing: a car being marked delivered must never fail because
+  -- a notification could not be sent.
+  raise warning 'notify_request_delivered failed: %', sqlerrm;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_on_delivered on public.requests;
+create trigger notify_on_delivered
+  after update on public.requests
+  for each row
+  when (old.status is distinct from 'complete' and new.status = 'complete')
+  execute function public.notify_request_delivered();
 
 
 -- --- login (service_role only — never callable from a phone) ----------------
@@ -1288,6 +1391,8 @@ grant execute on function public.app_can_issue()            to authenticated;
 grant execute on function public.app_can_claim()            to authenticated;
 grant execute on function public.app_can_claim_zone(text)   to authenticated;
 grant execute on function public.app_is_manager()           to authenticated;
+grant execute on function public.set_notification_preferences(boolean, boolean, boolean)
+  to authenticated;
 
 -- --- Tables: nothing at all for logged-out callers --------------------------
 --
@@ -1358,7 +1463,8 @@ grant execute on function public.cancel_request(uuid)                         to
 -- at whatever rate the internet can manage.
 revoke all on function public.verify_login_code(text)      from public, anon, authenticated;
 revoke all on function public.set_login_code(uuid, text)   from public, anon, authenticated;
-grant execute on function public.push_targets(text)          to service_role;
+grant execute on function public.push_targets(text)                to service_role;
+grant execute on function public.push_targets_delivered(uuid)      to service_role;
 grant execute on function public.forget_push_endpoint(text) to service_role;
 grant execute on function public.verify_login_code(text)    to service_role;
 grant execute on function public.set_login_code(uuid, text) to service_role;

@@ -147,12 +147,25 @@ async function encryptPayload(plaintext: string, p256dh: string, authSecret: str
 
 /* What the notification says. Built here rather than in the service worker,
    because only the server knows WHICH car triggered this particular push. */
+/* "Delivered by Marcus T." beats a bare "Delivered": it tells the cashier who
+   to ask if something looks wrong, without opening the app. */
+async function porterName(id: string) {
+  if (!id) return "";
+  try {
+    const res = await fetch(`${URL_}/rest/v1/users?select=name&id=eq.${id}`, {
+      headers: { apikey: SECRET, Authorization: `Bearer ${SECRET}` },
+    });
+    const rows = await res.json();
+    return rows?.[0]?.name ? ` by ${rows[0].name}` : "";
+  } catch { return ""; }
+}
+
 const LOCATION_LABEL: Record<string, string> = {
   "510": "510", "525": "525", express: "Express",
   drive: "Drive", wash: "Wash", lower_lot: "Lower Lot",
 };
 
-function describe(row: Record<string, unknown>) {
+function describeRequest(row: Record<string, unknown>) {
   const stop = (s: unknown) => LOCATION_LABEL[String(s)] ?? String(s ?? "?");
   const legs = [stop(row.origin)];
   if (row.via_wash && row.origin !== "wash" && row.destination !== "wash") legs.push("Wash");
@@ -179,11 +192,12 @@ Deno.serve(async (req) => {
   }
 
   let zone = "";
+  let event = "requested";
   let row: Record<string, unknown> = {};
   try {
     const body = await req.json();
-    // Database Webhooks post { type, table, schema, record, old_record }.
     row = body?.record ?? body ?? {};
+    event = String(body?.event ?? "requested");
     zone = String(row.zone ?? "");
 
     // `zone` is a generated column, so it should be in the row — but if the
@@ -196,17 +210,40 @@ Deno.serve(async (req) => {
   } catch {
     return new Response("Bad request", { status: 400 });
   }
-  if (zone !== "510" && zone !== "lower_lot") {
-    return new Response(JSON.stringify({ skipped: `unknown zone ${zone}` }), { status: 200 });
+  // Two things get announced, to two different audiences.
+  //
+  //   requested  a car is waiting — goes to whoever asked for that area
+  //   delivered  it has arrived   — goes to the cashier who requested it
+  //
+  // Both are opt-in per person, and both respect "signed in today", so nobody
+  // is buzzed on their day off.
+  let rpc: string;
+  let args: Record<string, unknown>;
+  let message: { title: string; body: string };
+
+  if (event === "delivered") {
+    const issuedBy = String(row.issued_by ?? "");
+    if (!issuedBy) {
+      return new Response(JSON.stringify({ skipped: "no issuer on the row" }), { status: 200 });
+    }
+    rpc = "push_targets_delivered";
+    args = { p_user: issuedBy };
+    message = { title: String(row.car_code ?? "Car delivered"),
+                body: "Delivered" + (await porterName(String(row.claimed_by ?? ""))) };
+  } else {
+    if (zone !== "510" && zone !== "lower_lot") {
+      return new Response(JSON.stringify({ skipped: `unknown zone ${zone}` }), { status: 200 });
+    }
+    rpc = "push_targets";
+    args = { p_zone: zone };
+    message = describeRequest(row);
   }
 
-  // Who works this area and is signed in today. Both halves matter: the areas
-  // route, and "signed in today" keeps someone's day off quiet.
-  const targetsRes = await fetch(`${URL_}/rest/v1/rpc/push_targets`, {
+  const targetsRes = await fetch(`${URL_}/rest/v1/rpc/${rpc}`, {
     method: "POST",
     headers: { apikey: SECRET, Authorization: `Bearer ${SECRET}`,
                "Content-Type": "application/json" },
-    body: JSON.stringify({ p_zone: zone }),
+    body: JSON.stringify(args),
   });
   if (!targetsRes.ok) {
     console.error("push_targets failed:", await targetsRes.text());
@@ -215,7 +252,7 @@ Deno.serve(async (req) => {
   const targets: { endpoint: string; p256dh: string | null; auth: string | null }[] =
     await targetsRes.json();
   if (targets.length === 0) {
-    return new Response(JSON.stringify({ sent: 0, note: "nobody on shift for this area" }),
+    return new Response(JSON.stringify({ event, sent: 0, note: "nobody wants this one" }),
                         { status: 200 });
   }
 
@@ -227,7 +264,7 @@ Deno.serve(async (req) => {
   let sent = 0, dropped = 0;
   const failures: string[] = [];
 
-  const message = JSON.stringify(describe(row));
+  const payloadText = JSON.stringify(message);
   let plain = 0;
 
   for (const { endpoint, p256dh, auth } of targets) {
@@ -249,7 +286,7 @@ Deno.serve(async (req) => {
       let payload: Uint8Array | undefined;
 
       if (canEncrypt) {
-        payload = await encryptPayload(message, p256dh!, auth!);
+        payload = await encryptPayload(payloadText, p256dh!, auth!);
         headers["Content-Encoding"] = "aes128gcm";
         headers["Content-Type"] = "application/octet-stream";
       } else {
@@ -281,7 +318,7 @@ Deno.serve(async (req) => {
   }
 
   if (failures.length) console.error("push failures:", failures);
-  return new Response(JSON.stringify({ zone, sent, dropped, plain, failures }), {
+  return new Response(JSON.stringify({ event, zone, sent, dropped, plain, failures }), {
     status: 200, headers: { "Content-Type": "application/json" },
   });
 });

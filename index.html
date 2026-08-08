@@ -393,6 +393,9 @@ dl { margin: 16px 0 22px; }
   display: flex; align-items: center; gap: 9px; min-height: 44px;
   padding: 6px 11px; border-radius: 9px; font-size: .84rem;
   background: var(--bg); border: 1px solid var(--line); color: var(--dim);
+  /* The generic `label` rule uppercases, which suits a two-word field name and
+     shouts when the text is a sentence. */
+  text-transform: none; letter-spacing: 0;
 }
 .perm input { width: 19px; height: 19px; accent-color: var(--silver); flex: none; }
 .perm.on { color: var(--text); border-color: #3a4049; }
@@ -1069,9 +1072,10 @@ const myClaims = () => requests.filter(r => r.status === "claimed" && r.claimed_
 function tabsFor() {
   const t = [{ id: "queue", label: "Queue", ico: "☰" }];
   if (canClaim()) t.push({ id: "mycar", label: "My Car", ico: "★" });
-  t.push({ id: "progress", label: "In Progress", ico: "◷" });
+  t.push({ id: "progress", label: "Active", ico: "◷" });
   if (canIssue()) t.push({ id: "issue", label: "Issue", ico: "＋" });
   t.push({ id: "history", label: "History", ico: "⟲" });
+  t.push({ id: "settings", label: "Settings", ico: "⚙" });
   return t;
 }
 
@@ -1205,6 +1209,7 @@ function render() {
 
   else if (tab === "issue") renderIssue();
   else if (tab === "history") renderHistory();
+  else if (tab === "settings") renderSettings();
   else if (tab === "admin")   renderAdmin();
 
   v.querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.id));
@@ -1357,6 +1362,61 @@ async function submitRequest() {
   } finally {
     btn.disabled = false; btn.textContent = "Send to porters";
   }
+}
+
+/* --- Settings ------------------------------------------------------------- */
+/* One section for now. The sub-tab bar is here so adding the next one is a
+   line rather than a rethink. */
+let settingsSection = "notifications";
+
+function renderSettings() {
+  const u = session.user;
+  const row = (key, label, note) => `
+    <label class="perm ${u[key] ? "on" : ""}" style="min-height:56px">
+      <input type="checkbox" data-pref="${key}" ${u[key] ? "checked" : ""}>
+      <span>${esc(label)}${note ? `<br><span style="font-size:.76rem;color:var(--dimmer)">${esc(note)}</span>` : ""}</span>
+    </label>`;
+
+  $("view").innerHTML = `
+    <h2 class="title">Settings</h2>
+    <div class="zonebar">
+      <button data-settings="notifications" aria-current="true">Notifications</button>
+    </div>
+
+    ${pushCard()}
+
+    <p class="sub">Choose what you want to be told about. Only you can change
+       these — nobody else sets them for you.</p>
+
+    <div class="perms" style="grid-template-columns:1fr">
+      ${row("notify_lower", "Lower Lot Car Requests", "A car is waiting in the lower lot")}
+      ${row("notify_510", "510 Car Requests", "A car is waiting in the 510 area")}
+      ${row("notify_delivered", "My Car Delivered", "A car you requested has arrived")}
+    </div>
+    <div id="prefMsg"></div>`;
+
+  if ($("enablePush")) $("enablePush").onclick = enablePush;
+
+  $("view").querySelectorAll("[data-pref]").forEach(box =>
+    box.onchange = async () => {
+      const wanted = {};
+      $("view").querySelectorAll("[data-pref]").forEach(b => { wanted[b.dataset.pref] = b.checked; });
+      try {
+        await api("/rest/v1/rpc/set_notification_preferences", { method: "POST", body: {
+          p_510: !!wanted.notify_510,
+          p_lower: !!wanted.notify_lower,
+          p_delivered: !!wanted.notify_delivered,
+        }});
+        Object.assign(session.user, wanted);
+        saveSession();
+        renderSettings();
+      } catch (e) {
+        // Put the switch back where it was rather than leaving it showing a
+        // change that never happened.
+        $("prefMsg").innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+        renderSettings();
+      }
+    });
 }
 
 /* --- History ------------------------------------------------------------- */
@@ -1804,7 +1864,7 @@ function adminAdvisors() {
   };
 }
 
-/* --- History ------------------------------------------------------------- */
+
 function adminHistoryView() {
   const done = adminHistory.filter(r => r.status === "complete");
   const waits = done.map(r => mins(r.created_at, r.claimed_at)).filter(v => v != null);
@@ -2195,6 +2255,9 @@ async function start() {
   $("whoRole").textContent = roleLabel(session.user);
   $("adminBtn").hidden = !session.user.is_admin;
 
+  // Pull the full row before the first render: the login function returns a
+  // trimmed profile, and Settings needs the notification preferences on it.
+  await checkSelf();
   await loadAdvisors();
   await loadRequests();
 
