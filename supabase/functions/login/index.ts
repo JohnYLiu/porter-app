@@ -187,7 +187,23 @@ Deno.serve(async (req) => {
     return json({ error: "Could not start your session" }, 500);
   }
 
-  const { data: session, error: otpErr } = await admin.auth.verifyOtp({
+  // A SEPARATE client, and this matters more than it looks.
+  //
+  // verifyOtp SIGNS THE CLIENT IN. Called on `admin`, it swaps that client's
+  // service key for the newly minted user's token, so every later .from() call
+  // silently runs as `authenticated` instead of `service_role`.
+  //
+  // That is what broke recording logins: the insert below sits after this line,
+  // so it ran as the porter — who has no grant on login_attempts — and failed
+  // with "permission denied". The failed-login inserts are ABOVE this line and
+  // worked fine, which is why the table held nine failures and not one success.
+  //
+  // Nothing ever surfaced. Logins worked, and the only casualty was the row
+  // saying who was on shift, which is how notifications choose who to reach.
+  const sessionClient = createClient(URL, SECRET, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: session, error: otpErr } = await sessionClient.auth.verifyOtp({
     token_hash: link.properties.hashed_token,
     type: "email",
   });
