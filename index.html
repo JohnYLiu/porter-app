@@ -1272,12 +1272,18 @@ function adminStaff() {
 
 /* --- Deactivated --------------------------------------------------------- */
 function adminDeactivated() {
-  const gone = adminUsers.filter(u => !u.active);
+  const gone     = adminUsers.filter(u => !u.active);
+  const retired  = adminAdvs.filter(a => !a.active);
 
+  // Advisors are never removed, only retired — a name on last month's requests
+  // is worth keeping regardless, and unlike a mistyped staff account there is
+  // no such thing as an advisor created by accident.
   $("adminBody").innerHTML = `
-    <p class="sub">Kept so their name stays on the cars they handled.
-       Bring anyone back, or remove them if there is nothing behind them.</p>
+    <p class="sub">Kept so their names stay on the cars they handled.
+       Bring anyone back at any time.</p>
     <div id="codeShown"></div>
+
+    <label>Staff</label>
     ${gone.length ? gone.map(u => `
       <div class="arow inactive">
         <div class="top">
@@ -1285,16 +1291,46 @@ function adminDeactivated() {
             <div class="nm">${esc(u.name)}</div>
             <div class="sub2">${esc(roleLabel(u))}</div>
           </div>
-          <button class="abtn" data-active="${u.id}" data-to="true">Reactivate</button>
+          <button class="abtn" data-active="${u.id}">Reactivate</button>
           ${u.is_admin ? "" : `<button class="abtn danger" data-remove="${u.id}">Remove</button>`}
         </div>
       </div>`).join("")
-    : `<div class="empty"><div class="big">✓</div><div>Nobody is deactivated</div></div>`}`;
+    : `<p class="checkhint">Nobody is deactivated.</p>`}
+
+    <label style="margin-top:22px">Service advisors</label>
+    ${retired.length ? retired.map(a => `
+      <div class="arow inactive">
+        <div class="top">
+          <span class="keychar" style="color:${esc(a.color)}">${esc(a.key_char || "—")}</span>
+          <span class="swatch" style="background:${esc(a.color)}"></span>
+          <div style="flex:1;min-width:0">
+            <div class="nm">${esc(a.name)}</div>
+            <div class="sub2">Their character is free for someone else</div>
+          </div>
+          <button class="abtn" data-adv="${a.id}">Bring back</button>
+        </div>
+      </div>`).join("")
+    : `<p class="checkhint">No advisors are retired.</p>`}`;
 
   $("adminBody").querySelectorAll("[data-active]").forEach(b =>
     b.onclick = async () => {
       const u = adminUsers.find(x => x.id === b.dataset.active);
       await adminWrite(`/rest/v1/users?id=eq.${u.id}`, "PATCH", { active: true });
+    });
+
+  $("adminBody").querySelectorAll("[data-adv]").forEach(b =>
+    b.onclick = async () => {
+      const a = adminAdvs.find(x => x.id === b.dataset.adv);
+      // Somebody may have taken their key character while they were away. The
+      // database trigger reassigns a fresh colour in that case; warn about the
+      // character, which it cannot resolve for us.
+      const taken = adminAdvs.find(x => x.active && x.key_char === a.key_char);
+      if (taken && !confirm(
+          `${taken.name} is using ${a.key_char} now.\n\n` +
+          `Bringing ${a.name} back will leave two advisors on the same character, ` +
+          `and tags starting with ${a.key_char} will match only one of them. ` +
+          `Continue?`)) return;
+      await adminWrite(`/rest/v1/service_advisors?id=eq.${a.id}`, "PATCH", { active: true });
     });
 
   $("adminBody").querySelectorAll("[data-remove]").forEach(b =>
@@ -1350,28 +1386,24 @@ function adminAdvisors() {
        Colours are assigned automatically from the palette.</p>
     <button class="btn primary" id="addAdv" style="margin-bottom:16px">Add an advisor</button>
     <div id="newAdv"></div>
-    ${adminAdvs.map(a => `
-      <div class="arow ${a.active ? "" : "inactive"}">
+    ${adminAdvs.filter(a => a.active).map(a => `
+      <div class="arow">
         <div class="top">
           <span class="keychar" style="color:${esc(a.color)}">${esc(a.key_char || "—")}</span>
           <span class="swatch" style="background:${esc(a.color)}"></span>
           <span class="nm">${esc(a.name)}</span>
-          <button class="abtn ${a.active ? "danger" : ""}" data-adv="${a.id}"
-                  data-to="${a.active ? "false" : "true"}">
-            ${a.active ? "Retire" : "Bring back"}
-          </button>
+          <button class="abtn danger" data-adv="${a.id}">Retire</button>
         </div>
-        ${a.active ? "" : `<div class="sub2">Retired — their character is free for someone else.</div>`}
       </div>`).join("")}`;
 
   $("adminBody").querySelectorAll("[data-adv]").forEach(b =>
     b.onclick = async () => {
       const a = adminAdvs.find(x => x.id === b.dataset.adv);
-      if (a.active && !confirm(
+      if (!confirm(
           `Retire ${a.name}?\n\nTags starting with ${a.key_char} will show as Unknown ` +
-          `until somebody else takes that character. Past requests keep their name.`)) return;
-      await adminWrite(`/rest/v1/service_advisors?id=eq.${a.id}`, "PATCH",
-                       { active: b.dataset.to === "true" });
+          `until somebody else takes that character. Past requests keep their name, ` +
+          `and they move to the Inactive tab.`)) return;
+      await adminWrite(`/rest/v1/service_advisors?id=eq.${a.id}`, "PATCH", { active: false });
     });
 
   $("addAdv").onclick = () => {
