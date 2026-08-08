@@ -8,6 +8,29 @@ Re-run with `python3 tests/security_test.py` after any change to
 
 ---
 
+## 2026-08-08 — Lower Lot added as a sixth location, 55/55
+
+Locations are now 510, Lower Lot, Drive, Express, 525, Wash. The added test pins down
+the one case that reads wrong at a glance:
+
+```
+  PASS  lower lot location to 510 is a 510 job  — zone=510
+```
+
+Verified against the live database, and through the app as each porter:
+
+| Request | Area | Seen by |
+| --- | --- | --- |
+| Lower Lot → 510 | 510 | 510 porter |
+| 525 → Lower Lot | 510 | 510 porter |
+| Lower Lot → Wash → Express | lower lot | Lower Lot porter |
+
+"Lower Lot" is a location AND an area. A car going **510 → Lower Lot** is a 510 job — one
+end is 510, so a 510 porter handles it even though it is headed for the lower lot. That
+follows from the stated rule and is deliberate; the test exists so nobody "corrects" it.
+
+---
+
 ## 2026-08-08 — full pass after the two porter areas, 54/54
 
 Adds the area rule: every request belongs to the 510 area or the lower lot, decided by
