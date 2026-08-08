@@ -509,6 +509,7 @@ let advisors = [];
 let requests = [];
 let tab = "queue";
 let zone = "510";        // which area sub-tab is showing in Queue / In Progress
+let activeMineOnly = true;   // Active tab: only cars this cashier requested
 let poller = null;
 let lastFetchOk = true;
 let lastFieldTouch = 0;        // when a form field was last actually interacted with
@@ -724,6 +725,9 @@ function signOut(reason = "") {
   localStorage.removeItem(STORE);
   clearInterval(poller); poller = null;
   requests = []; advisors = []; tab = "queue";
+  // Per-person view state, not per-device: the next person to sign in on this
+  // phone should get the defaults, not inherit the last one's filters.
+  activeMineOnly = true; zone = "510";
   $("app").hidden = true;
   $("login").hidden = false;
   $("code").value = "";
@@ -1157,6 +1161,21 @@ function inZone(list) {
   return list.filter(r => r.zone === active);
 }
 
+/* Mine / everyone's, for people who issue requests.
+   Defaults to Mine: a cashier asking "where is my car" is the common question,
+   and the whole board is the exception. */
+function mineBar(all) {
+  if (!canIssue()) return "";
+  const mine = all.filter(r => r.issued_by === session.user.id).length;
+  const pill = (on, key, label, count) =>
+    `<button data-mine="${key}" aria-current="${on}">${esc(label)}` +
+    (count ? `<span class="n">${count}</span>` : "") + `</button>`;
+  return `<div class="zonebar">` +
+    pill(activeMineOnly,  "1", "My requests", mine) +
+    pill(!activeMineOnly, "0", "Everyone's", all.length) +
+    `</div>`;
+}
+
 function bindZoneBar() {
   $("view").querySelectorAll("[data-zone]").forEach(b =>
     b.onclick = () => { zone = b.dataset.zone; render(); });
@@ -1197,14 +1216,28 @@ function render() {
 
   else if (tab === "progress") {
     const all = byStatus("claimed");
-    const counts = Object.fromEntries(ZONES.map(z => [z.id, all.filter(r => r.zone === z.id).length]));
-    const live = inZone(all);
-    v.innerHTML = `<h2 class="title">In Progress</h2>` + zoneBar(counts) +
+
+    // A cashier mostly wants to know about the cars THEY asked for. Everyone
+    // else has no use for the distinction, so they never see the switch.
+    const scoped = (canIssue() && activeMineOnly)
+      ? all.filter(r => r.issued_by === session.user.id)
+      : all;
+
+    // Counts follow the filter, so the number on a sub-tab always matches what
+    // tapping it would show.
+    const counts = Object.fromEntries(ZONES.map(z => [z.id, scoped.filter(r => r.zone === z.id).length]));
+    const live = inZone(scoped);
+
+    v.innerHTML = `<h2 class="title">In Progress</h2>` + mineBar(all) + zoneBar(counts) +
       (live.length
         ? `<p class="sub">${live.length} being delivered right now.</p>` +
           live.map(r => card(r, { time: "claimed " + ago(r.claimed_at) })).join("")
-        : empty("◷", "Nothing in progress in this area"));
+        : empty("◷", (canIssue() && activeMineOnly)
+            ? "None of your cars are on the move"
+            : "Nothing in progress in this area"));
     bindZoneBar();
+    $("view").querySelectorAll("[data-mine]").forEach(b =>
+      b.onclick = () => { activeMineOnly = b.dataset.mine === "1"; render(); });
   }
 
   else if (tab === "issue") renderIssue();
