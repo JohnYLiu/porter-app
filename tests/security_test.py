@@ -196,13 +196,37 @@ def phase_b():
         return
 
     tokens, ids, users = {}, {}, {}
+    failed_logins = []
     for role, code in TEST_ACCOUNTS.items():
         tok, user = login(code)
-        if not check(f"log in as {role}", tok is not None):
-            return
+        if not tok:
+            failed_logins.append(role)
+            continue
         tokens[role] = tok
         users[role] = user or {}
         ids[role] = (user or {}).get("id")
+
+    if failed_logins:
+        # Work out WHY before crying wolf. A deactivated account cannot log in —
+        # that is the system working, and it happens easily because these are
+        # test accounts anybody can switch off from the admin screen. Reporting
+        # it as a security failure is how a suite loses its credibility.
+        deactivated = []
+        if tokens:
+            any_token = next(iter(tokens.values()))
+            st, rows = request("/rest/v1/users?select=name,active", token=any_token)
+            if isinstance(rows, list):
+                deactivated = [r["name"] for r in rows if not r["active"]]
+
+        for role in failed_logins:
+            check(f"log in as {role}", False,
+                  "account is deactivated — re-run tools/seed.py, which reactivates "
+                  "test accounts" if deactivated else "login refused")
+        if deactivated:
+            print(f"      currently deactivated: {', '.join(deactivated)}")
+        print("      The checks below need every test account signed in, so they")
+        print("      are skipped rather than run.")
+        return
 
     porter, cashier = tokens.get("porter"), tokens.get("cashier")
     porter2, manager = tokens.get("porter2"), tokens.get("manager")
@@ -473,11 +497,13 @@ def main():
         # should not reach it" is the right alarm for a real breach and badly
         # wrong for a mis-seeded test account — and a suite that raises the same
         # alarm for both teaches people to ignore it.
-        if all(name.startswith("fixture:") for name, _, _ in failed):
+        if all(name.startswith("fixture:") or name.startswith("log in as")
+               for name, _, _ in failed):
             print("\nThese are test-data problems, not security failures: the")
             print("accounts are not set up the way the checks assume, so those")
             print("checks were skipped rather than run. Re-run tools/seed.py,")
-            print("which corrects test account permissions, then run this again.")
+            print("which reactivates test accounts and corrects their")
+            print("permissions, then run this again.")
         else:
             print("\nA failure here means data is reachable by someone who should")
             print("not reach it. Do not deploy until this is empty.")

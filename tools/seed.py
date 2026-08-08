@@ -110,6 +110,10 @@ def create_user(name, code, can_issue, can_claim_510, can_claim_lower,
         "can_issue": can_issue,
         "can_claim_510": can_claim_510, "can_claim_lower": can_claim_lower,
         "is_manager": is_manager, "is_admin": is_admin,
+        # Reactivate too. A test account deactivated while exploring the admin
+        # screen cannot log in, which makes the security suite fail for a reason
+        # that has nothing to do with security.
+        "active": True,
     }
 
     status, existing = call(
