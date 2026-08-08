@@ -2164,14 +2164,41 @@ if ("serviceWorker" in navigator) {
   consumeQueueIntent();
 }
 
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return;
-  consumeQueueIntent();          // a notification may have been tapped to get here
-  if (session) refresh();
-});
+/* iOS does not reliably fire visibilitychange when an installed app is resumed
+   — sometimes it is pageshow, sometimes only focus. Listening for all three
+   costs nothing and is the difference between the queue appearing and not. */
+function onForeground() {
+  // NOT guarded on document.hidden. That guard exists to avoid polling while
+  // the app is in the background — it has no business gating the intent check.
+  // iOS fires focus and pageshow while `hidden` is still true, so guarding this
+  // meant the flag was never read and the queue never appeared.
+  //
+  // Safe to run either way: the flag carries its own one-minute expiry, and
+  // switching tabs on a page nobody is looking at costs nothing.
+  consumeQueueIntent();
 
-serviceWorkerVersion().then(v => {
-  $("version").textContent = v ? v : "not installed";
+  // The poll, however, genuinely should not run while hidden.
+  if (!document.hidden && session) refresh();
+}
+document.addEventListener("visibilitychange", onForeground);
+window.addEventListener("pageshow", onForeground);
+window.addEventListener("focus", onForeground);
+
+// Version, plus when a notification tap last reached the service worker. If
+// that stays blank after tapping one, the tap is not reaching the worker at all
+// and nothing on the app side could have helped.
+serviceWorkerVersion().then(async (v) => {
+  let tapped = "";
+  try {
+    const hit = await (await caches.open("porter-intent")).match("/__last-click");
+    if (hit) {
+      const when = new Date(Number(await hit.text()));
+      tapped = " · last tap " + when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } else {
+      tapped = " · no taps seen";
+    }
+  } catch { /* no cache api */ }
+  $("version").textContent = (v || "not installed") + tapped;
 });
 
 loadSession();

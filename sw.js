@@ -24,7 +24,7 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v26";
+const CACHE = "porter-v28";
 
 /* Kept separate from CACHE, and NOT cleared on activate. It holds one flag:
    "a notification was tapped, show the queue". A service worker cannot reach
@@ -104,7 +104,12 @@ self.addEventListener("notificationclick", (e) => {
     // becomes visible, which covers every one of those paths.
     try {
       const c = await caches.open(INTENT);
-      await c.put("/__show-queue", new Response(String(Date.now())));
+      const now = String(Date.now());
+      await c.put("/__show-queue", new Response(now));
+      // Never consumed, never expires. Purely so the sign-in screen can answer
+      // "did tapping a notification reach the service worker at all?" — which
+      // is otherwise unknowable on a phone with no console.
+      await c.put("/__last-click", new Response(now));
     } catch { /* nothing better to do */ }
 
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
