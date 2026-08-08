@@ -318,6 +318,15 @@ create table if not exists public.push_subscriptions (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid        not null references public.users(id) on delete cascade,
   endpoint   text        not null unique,
+
+  -- The device's own public key and auth secret. A push carrying a body must be
+  -- encrypted with these — the spec forbids sending one in the clear, even over
+  -- HTTPS. Nullable, because subscriptions made before this existed have none:
+  -- those still get a push, just without the car on it. The app fills them in
+  -- on the next sign-in rather than making everyone re-enable notifications.
+  p256dh     text,
+  auth       text,
+
   created_at timestamptz not null default now()
 );
 
@@ -424,6 +433,9 @@ create unique index if not exists service_advisors_key_char_idx
 
 -- A towed-in car and a tag with no advisor both genuinely have none.
 alter table public.requests alter column advisor_id drop not null;
+
+alter table public.push_subscriptions add column if not exists p256dh text;
+alter table public.push_subscriptions add column if not exists auth   text;
 
 alter table public.requests add column if not exists tag_type text
   generated always as (
@@ -937,10 +949,12 @@ $$;
 --
 -- service_role only: this returns a list of push endpoints, which is exactly
 -- the sort of thing that should never be readable from a phone.
+drop function if exists public.push_targets(text);
+
 create or replace function public.push_targets(p_zone text)
-returns table(endpoint text)
+returns table(endpoint text, p256dh text, auth text)
 language sql stable security definer set search_path = '' as $$
-  select ps.endpoint
+  select ps.endpoint, ps.p256dh, ps.auth
     from public.push_subscriptions ps
     join public.users u on u.id = ps.user_id
    where u.active

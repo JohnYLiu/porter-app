@@ -24,7 +24,7 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v29";
+const CACHE = "porter-v30";
 
 /* Kept separate from CACHE, and NOT cleared on activate. It holds one flag:
    "a notification was tapped, show the queue". A service worker cannot reach
@@ -67,6 +67,17 @@ self.addEventListener("activate", (e) => {
  * here on purpose.
  */
 self.addEventListener("push", (e) => {
+  // The server names the car, because only it knows which one triggered THIS
+  // push. Older subscriptions have no encryption keys and arrive empty — those
+  // fall back to the generic wording rather than showing nothing.
+  let title = "New car request";
+  let body  = "Tap to see the queue.";
+  try {
+    const d = e.data?.json();
+    if (d?.title) title = d.title;
+    if (d?.body)  body  = d.body;
+  } catch { /* not JSON, or no payload — the fallback stands */ }
+
   // NO `tag`. A shared tag makes each push REPLACE the last one, and iOS
   // honours `renotify` inconsistently — so the first car buzzed and every one
   // after it silently overwrote the notification with no sound. Exactly the
@@ -75,8 +86,8 @@ self.addEventListener("push", (e) => {
   // Untagged, each request is its own line: five cars waiting look like five
   // cars waiting, which is the whole point of a queue.
   e.waitUntil(
-    self.registration.showNotification("New car request", {
-      body: "Tap to see the queue.",
+    self.registration.showNotification(title, {
+      body,
       icon: "./icon-192.png",
       badge: "./icon-192.png",
       timestamp: Date.now(),

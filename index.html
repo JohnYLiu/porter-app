@@ -906,18 +906,28 @@ async function syncPush() {
 
   let mine = [];
   try {
-    mine = await api("/rest/v1/push_subscriptions?select=endpoint&endpoint=eq." +
+    mine = await api("/rest/v1/push_subscriptions?select=endpoint,p256dh&endpoint=eq." +
                      encodeURIComponent(sub.endpoint));
   } catch { return; }
 
-  if (Array.isArray(mine) && mine.length) { pushOn = true; return; }
+  if (Array.isArray(mine) && mine.length) {
+    pushOn = true;
+    // Subscribed before the keys were stored. Fill them in quietly rather than
+    // asking everyone to turn notifications on again — otherwise those devices
+    // would keep getting the generic wording forever.
+    if (!mine[0].p256dh) {
+      await api("/rest/v1/push_subscriptions?endpoint=eq." + encodeURIComponent(sub.endpoint),
+                { method: "PATCH", body: subscriptionKeys(sub) }).catch(() => {});
+    }
+    return;
+  }
 
   // No row for this endpoint. Usually because signing out released it, so claim
   // it back — that restores notifications on sign-in without asking again.
   try {
     await api("/rest/v1/push_subscriptions", {
       method: "POST",
-      body: { user_id: session.user.id, endpoint: sub.endpoint },
+      body: { user_id: session.user.id, endpoint: sub.endpoint, ...subscriptionKeys(sub) },
     });
     pushOn = true;
     return;
@@ -928,6 +938,14 @@ async function syncPush() {
   await subscribePush().catch(() => {});
 }
 
+// The device's own keys, which the server needs to encrypt a message to it.
+// Without them a push can carry no body at all, so the notification cannot name
+// the car.
+const subscriptionKeys = (sub) => {
+  const k = sub.toJSON?.().keys || {};
+  return { p256dh: k.p256dh || null, auth: k.auth || null };
+};
+
 async function subscribePush() {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.subscribe({
@@ -936,7 +954,7 @@ async function subscribePush() {
   });
   await api("/rest/v1/push_subscriptions", {
     method: "POST",
-    body: { user_id: session.user.id, endpoint: sub.endpoint },
+    body: { user_id: session.user.id, endpoint: sub.endpoint, ...subscriptionKeys(sub) },
   });
   pushOn = true;
 }
