@@ -158,24 +158,25 @@ nav .badge {
   display: grid; place-items: center;
 }
 
-/* --- Porter tab bar ---------------------------------------------------------
+/* --- Tab bar with a raised middle -------------------------------------------
  *
- * Same tabs as everyone else, arranged around a raised Queue. A porter opens
- * the Queue far more than the other three put together, and usually one-handed
- * with a key tag in the other, so it gets the centre, the largest target, and
- * the only piece of the bar with real contrast in it.
+ * Both roles get this shape; they differ only in which tab is promoted into
+ * it. A porter opens the Queue far more than everything else put together, and
+ * a cashier is there to issue requests. Whichever it is gets the centre, the
+ * largest target, and the only piece of the bar with real contrast in it —
+ * findable one-handed, with a key tag in the other hand.
  */
-nav.porterbar { display: grid; grid-template-columns: 1fr auto 1fr; }
-/* The bump rises 40px above the bar, so the last card in a scrolled list would
+nav.herobar { display: grid; grid-template-columns: 1fr auto 1fr; }
+/* The bump rises 45px above the bar, so the last card in a scrolled list would
    otherwise finish underneath it. Buy that space back. */
-#app.porterui main { padding-bottom: 58px; }
-nav.porterbar .side { display: flex; gap: 2px; min-width: 0; }
-nav.porterbar .side > button { flex: 1; }
+#app.herobar main { padding-bottom: 58px; }
+nav.herobar .side { display: flex; gap: 2px; min-width: 0; }
+nav.herobar .side > button { flex: 1; }
 
-nav.porterbar .hero {
+nav.herobar .hero {
   position: relative; flex: none; width: 96px;
-  /* The label sits at the bottom of the bar in line with the other four; the
-     icon above it is positioned, so it can sit up inside the bump without
+  /* The label sits at the bottom of the bar in line with the other tabs'; the
+     icon above it is positioned, so it can sit up on the bar's edge without
      stretching the bar to fit. */
   justify-content: flex-end; padding-bottom: 7px;
   background: none;
@@ -185,7 +186,7 @@ nav.porterbar .hero {
    carrying the bar's own hairline around the arc. Not a button sitting on the
    bar — the bar itself pushed up. Its flat bottom overlaps the straight border
    by a pixel so the hairline does not cut across the base of the bump. */
-nav.porterbar .hero::before {
+nav.herobar .hero::before {
   content: "";
   position: absolute; left: 50%; transform: translateX(-50%);
   /* 92 wide by 46 high — a true half-circle. Sized and placed so its flat base
@@ -197,30 +198,33 @@ nav.porterbar .hero::before {
   border: 1px solid var(--line); border-bottom: none;
 }
 
-/* White at rest, not just when selected. This is the tab a porter reaches for
+/* White at rest, not just when selected. This is the tab its owner reaches for
    without looking, so it is the one place in the bar that stays at full
    contrast whatever else is open. */
-nav.porterbar .hero .ico { font-size: 2.8rem; color: #fff; }
-nav.porterbar .hero .lbl { color: #fff; }
+nav.herobar .hero .ico { font-size: 2.8rem; color: #fff; }
+nav.herobar .hero .lbl { color: #fff; }
 
 /* Sat so the middle of the glyph lands on the bar's top edge, which is 7px
    above the hero's own top given the bar's 6px of padding and its hairline.
-   The offset is -13 rather than -7 because it is the INK that has to line up,
-   and the three bars of this glyph sit about 6px below the centre of their em
-   box — centring the box would leave the symbol visibly low. Measured, not
-   guessed. */
-nav.porterbar .hero .disc {
-  position: absolute; left: 50%; top: -13px;
+   Neither offset is -7, because it is the INK that has to line up rather than
+   the box around it, and a glyph is not centred in its own em box. These are
+   per-glyph and measured from the font's metrics, not nudged by eye: the three
+   bars of U+2630 sit 6.0px low in their box, the fullwidth plus 1.9px. Change
+   either icon and its number has to be measured again. */
+nav.herobar .hero .disc {
+  position: absolute; left: 50%;
   transform: translate(-50%, -50%);
   display: grid; place-items: center;
 }
+nav.herobar .hero[data-tab="queue"] .disc { top: -13px; }
+nav.herobar .hero[data-tab="issue"] .disc { top:  -9px; }
 
 /* Selected. The bump keeps the bar's fill — the whole point of the shape is
    that it is the bar, not something sitting on it — so the state shows in the
    hairline instead, which brightens. The icon and label do not change: they are
    already as bright as they go. */
-nav.porterbar .hero[aria-current="true"] { background: none; }
-nav.porterbar .hero[aria-current="true"]::before { border-color: var(--dim); }
+nav.herobar .hero[aria-current="true"] { background: none; }
+nav.herobar .hero[aria-current="true"]::before { border-color: var(--dim); }
 
 /* The count belongs up in the bump, not trailing the word. It is measured from
    the hero, which means it has to sit OUTSIDE .disc — an absolute child of the
@@ -229,7 +233,7 @@ nav.porterbar .hero[aria-current="true"]::before { border-color: var(--dim); }
    right rather than tucking inside: at this size the icon fills the
    half-circle, and a badge within the arc would land on top of it. Centred on
    its own x so a two-digit count grows both ways instead of drifting off. */
-nav.porterbar .hero .badge {
+nav.herobar .hero .badge {
   position: absolute; left: 72px; top: -54px; right: auto;
   transform: translateX(-50%);
 }
@@ -1244,10 +1248,9 @@ function renderTabs() {
   const waiting = byStatus("unclaimed").filter(r => mineZones.includes(r.zone)).length;
 
   const nav = $("tabs");
-  nav.className = porterBar() ? "porterbar" : "";
-  $("app").classList.toggle("porterui", porterBar());
-  nav.innerHTML = porterBar() ? porterTabs(list, waiting)
-                              : list.map(t => tabBtn(t, waiting)).join("");
+  nav.className = "herobar";
+  $("app").classList.add("herobar");
+  nav.innerHTML = heroTabs(list, waiting, heroTab());
 
   nav.querySelectorAll("button").forEach(b =>
     b.onclick = () => { tab = b.dataset.tab; render(); });
@@ -1262,22 +1265,27 @@ function tabBtn(t, waiting) {
           </button>`;
 }
 
-/* Active on the left, Queue raised in the middle, History and Settings on the
-   right. The two sides are laid out as equal halves so the disc lands dead
-   centre however many tabs sit either side of it. */
-function porterTabs(list, waiting) {
-  const queue = list.find(t => t.id === "queue");
+/* The tab each role reaches for most, and so the one that gets the middle.
+   A porter opens the Queue all day; a cashier's job is issuing requests. The
+   cashier bar always has an Issue tab to promote, because the only people on
+   that bar are the ones who can issue. */
+const heroTab = () => porterBar() ? "queue" : "issue";
+
+/* One tab raised into the half-circle in the middle, the rest split either
+   side: History and Settings on the right, everything else on the left. The
+   two sides are equal halves, so the bump lands dead centre whether there are
+   one or two tabs beside it. */
+function heroTabs(list, waiting, heroId) {
+  const hero  = list.find(t => t.id === heroId);
   const right = list.filter(t => t.id === "history" || t.id === "settings");
-  // Everything that is not the Queue or one of the right-hand two. Today that
-  // is Active alone, and it spreads across the whole left half.
-  const left  = list.filter(t => t.id !== "queue" && !right.includes(t));
+  const left  = list.filter(t => t.id !== heroId && !right.includes(t));
 
   return `<div class="side">${left.map(t => tabBtn(t, waiting)).join("")}</div>` +
-    (queue ? `
-      <button class="hero" data-tab="${queue.id}" aria-current="${queue.id === tab}">
-        <span class="disc"><span class="ico">${queue.ico}</span></span>
-        ${waiting ? `<span class="badge">${waiting}</span>` : ""}
-        <span class="lbl">${esc(queue.label)}</span>
+    (hero ? `
+      <button class="hero" data-tab="${hero.id}" aria-current="${hero.id === tab}">
+        <span class="disc"><span class="ico">${hero.ico}</span></span>
+        ${hero.id === "queue" && waiting ? `<span class="badge">${waiting}</span>` : ""}
+        <span class="lbl">${esc(hero.label)}</span>
       </button>` : "") +
     `<div class="side">${right.map(t => tabBtn(t, waiting)).join("")}</div>`;
 }
