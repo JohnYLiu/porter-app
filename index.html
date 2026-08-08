@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Porter Dispatch</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Porter">
+<meta name="theme-color" content="#0c0d0f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+
+<style>
+/* ---------------------------------------------------------------------------
+   Porter Dispatch
+
+   Dark throughout, deliberately. The logo is white on black, porters use this
+   in a dim service bay and at 7am, and a light theme would be the wrong tool
+   in both. Near-black rather than pure black: the advisor colours vibrate
+   against #000.
+
+   No web fonts. The system stack loads instantly, works offline, and looks
+   native on both iPhone and Android.
+--------------------------------------------------------------------------- */
+:root {
+  --bg:        #0c0d0f;
+  --surface:   #16181c;
+  --surface-2: #1e2127;
+  --line:      #2a2e35;
+  --text:      #f2f4f6;
+  --dim:       #98a0aa;
+  --dimmer:    #6b7280;
+  --silver:    #e8eaed;
+  --danger:    #f0656f;
+  --ok:        #4ade80;
+  --warn:      #fbbf24;
+  --radius: 14px;
+  --tap: 52px;                       /* every tappable thing clears this */
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+/* The `hidden` attribute is only `display:none` in the browser's own default
+   stylesheet, so any author rule setting `display` silently defeats it. Both
+   #login and #app are flex containers, which is exactly that trap. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px; line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+body { overscroll-behavior-y: contain; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+
+/* --- Login ---------------------------------------------------------------- */
+#login {
+  min-height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 24px calc(32px + env(safe-area-inset-bottom));
+  gap: 8px;
+}
+/* The logo is white artwork on a solid black plate. `screen` drops the black
+   to nothing, so the mark floats on the page background instead of sitting in
+   a visible dark square that never quite matches --bg. */
+#login img { width: 190px; max-width: 58vw; height: auto; margin-bottom: 4px;
+             mix-blend-mode: screen; }
+#login h1 {
+  font-size: 1rem; font-weight: 500; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--dim); margin: 0 0 28px;
+}
+#code {
+  width: 100%; max-width: 320px; height: 68px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 2rem; letter-spacing: .35em; text-indent: .35em;  /* centres despite tracking */
+  outline: none;
+}
+#code:focus { border-color: var(--silver); }
+#login button {
+  width: 100%; max-width: 320px; height: 56px; margin-top: 14px;
+  background: var(--silver); color: #000; font-weight: 650;
+  border-radius: var(--radius); font-size: 1.05rem;
+}
+#login button:disabled { opacity: .45; }
+#loginErr { color: var(--danger); min-height: 1.4em; margin: 14px 0 0; text-align: center; font-size: .92rem; }
+
+/* --- Shell ---------------------------------------------------------------- */
+#app { min-height: 100%; display: flex; flex-direction: column; }
+
+header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  background: rgba(12,13,15,.92); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+header .who { flex: 1; min-width: 0; }
+header .who b { display: block; font-size: .95rem; font-weight: 600; }
+header .who span { display: block; font-size: .74rem; color: var(--dimmer); letter-spacing: .06em; text-transform: uppercase; }
+header button {
+  height: 38px; padding: 0 13px; border-radius: 9px;
+  background: var(--surface-2); color: var(--dim); font-size: .85rem;
+}
+
+main { flex: 1; padding: 16px 16px 24px; }
+
+nav {
+  position: sticky; bottom: 0; z-index: 20;
+  display: flex; gap: 2px;
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  background: rgba(12,13,15,.94); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+}
+nav button {
+  flex: 1; min-height: var(--tap); border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  font-size: .68rem; color: var(--dimmer); letter-spacing: .02em;
+}
+nav button .ico { font-size: 1.15rem; line-height: 1; }
+nav button[aria-current="true"] { color: var(--text); background: var(--surface-2); }
+nav .badge {
+  position: absolute; transform: translate(20px, -14px);
+  background: var(--silver); color: #000; font-size: .62rem; font-weight: 700;
+  min-width: 17px; height: 17px; border-radius: 9px; padding: 0 5px;
+  display: grid; place-items: center;
+}
+
+h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
+.sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
+
+/* --- Request cards -------------------------------------------------------- */
+.card {
+  position: relative;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 5px solid var(--advisor, var(--line));
+  border-radius: var(--radius);
+  padding: 14px 15px; margin-bottom: 11px;
+  display: block; width: 100%; text-align: left;
+}
+.card:active { background: var(--surface-2); }
+.card .row1 { display: flex; align-items: baseline; gap: 10px; }
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.5rem; font-weight: 600; letter-spacing: .06em;
+  /* Monospace on purpose: this is the one string a porter reads off a screen
+     and matches against a windscreen. O vs 0 and I vs 1 have to be obvious. */
+}
+.card .age { margin-left: auto; color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
+.card .row2 { display: flex; align-items: center; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+
+.badge-dest {
+  font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim);
+}
+.badge-dest.express { border-color: #4a4034; color: var(--warn); }
+
+/* The advisor's colour NEVER travels alone — the name rides with it every
+   time. Roughly 1 in 12 men cannot reliably separate some of these hues, and
+   a queue keyed only on colour is unusable for them. */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: .78rem; color: var(--dim);
+}
+.chip .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--advisor); flex: none; }
+.note { margin-top: 9px; color: var(--dim); font-size: .88rem; }
+.meta { margin-top: 8px; color: var(--dimmer); font-size: .76rem; }
+
+.empty { text-align: center; color: var(--dimmer); padding: 56px 20px; }
+.empty .big { font-size: 2.4rem; margin-bottom: 10px; opacity: .35; }
+
+/* --- Forms and buttons ---------------------------------------------------- */
+label { display: block; font-size: .78rem; color: var(--dim); margin: 16px 0 7px;
+        letter-spacing: .07em; text-transform: uppercase; }
+input[type=text], select, textarea {
+  width: 100%; min-height: var(--tap); padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
+  outline: none; appearance: none;
+}
+input[type=text]:focus, select:focus, textarea:focus { border-color: var(--silver); }
+/* appearance:none strips the native dropdown arrow, leaving a select that looks
+   like a plain text field. Put one back, or nobody knows it opens. */
+select {
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%),
+                    linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 19px) calc(50% + 2px), calc(100% - 13px) calc(50% + 2px);
+  background-size: 6px 6px; background-repeat: no-repeat;
+  padding-right: 40px;
+}
+textarea { min-height: 84px; resize: vertical; }
+#car_code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 1.3rem; letter-spacing: .09em; text-transform: uppercase; }
+
+.seg { display: flex; gap: 8px; }
+.seg button {
+  flex: 1; min-height: var(--tap); border-radius: 11px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--dim);
+  font-weight: 600; letter-spacing: .03em;
+}
+.seg button[aria-pressed="true"] { background: var(--silver); color: #000; border-color: var(--silver); }
+
+.btn {
+  display: block; width: 100%; min-height: 56px; border-radius: 12px;
+  font-size: 1.02rem; font-weight: 650; margin-top: 10px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
+}
+.btn.primary { background: var(--silver); color: #000; border-color: var(--silver); }
+.btn.danger  { color: var(--danger); }
+.btn:disabled { opacity: .45; }
+
+.msg { margin-top: 14px; padding: 12px 14px; border-radius: 11px; font-size: .9rem; }
+.msg.err  { background: #2a1416; color: var(--danger); }
+.msg.info { background: #1a2029; color: var(--dim); }
+.msg.ok   { background: #10231a; color: var(--ok); }
+
+.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.filters select { min-height: 44px; font-size: .88rem; padding: 8px 11px; }
+
+/* --- Detail sheet --------------------------------------------------------- */
+#sheet {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0,0,0,.65); backdrop-filter: blur(3px);
+  display: flex; align-items: flex-end;
+}
+#sheet[hidden] { display: none; }
+#sheetBody {
+  width: 100%; max-height: 92vh; overflow-y: auto;
+  background: var(--bg); border-top: 1px solid var(--line);
+  border-radius: 20px 20px 0 0;
+  padding: 8px 18px calc(24px + env(safe-area-inset-bottom));
+  animation: rise .22s ease-out;
+}
+@keyframes rise { from { transform: translateY(16px); opacity: .4 } }
+.grip { width: 38px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 16px; }
+.detail-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size: 2.3rem; font-weight: 650; letter-spacing: .05em; }
+.kv { display: flex; justify-content: space-between; gap: 16px;
+      padding: 11px 0; border-bottom: 1px solid var(--line); font-size: .92rem; }
+.kv dt { color: var(--dimmer); flex: none; }
+.kv dd { margin: 0; text-align: right; }
+dl { margin: 16px 0 22px; }
+
+.status-pill {
+  display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; padding: 4px 10px; border-radius: 6px; margin-left: 10px;
+  vertical-align: middle;
+}
+.status-pill.unclaimed { background: #262a31; color: var(--dim); }
+.status-pill.claimed   { background: #1f2c22; color: var(--ok); }
+.status-pill.complete  { background: #1a2029; color: var(--dimmer); }
+.status-pill.cancelled { background: #2a1416; color: var(--danger); }
+
+.offline {
+  position: fixed; left: 12px; right: 12px; z-index: 80;
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  background: #3a2a12; color: var(--warn); border: 1px solid #5a4420;
+  border-radius: 11px; padding: 10px 14px; font-size: .86rem; text-align: center;
+}
+.offline[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ========================= LOGIN ========================= -->
+<div id="login">
+  <img src="logo.png" alt="Autobahn Motors">
+  <h1>Porter Dispatch</h1>
+  <input id="code" type="text" inputmode="numeric" autocomplete="off"
+         maxlength="8" placeholder="········" aria-label="Your 8-digit code">
+  <button id="loginBtn">Sign in</button>
+  <p id="loginErr" role="alert"></p>
+</div>
+
+<!-- ========================= APP ========================= -->
+<div id="app" hidden>
+  <header>
+    <div class="who"><b id="whoName"></b><span id="whoRole"></span></div>
+    <button id="adminBtn" hidden>Admin</button>
+    <button id="signOutBtn">Sign out</button>
+  </header>
+  <main id="view"></main>
+  <nav id="tabs"></nav>
+</div>
+
+<div class="offline" id="offline" hidden>No connection — showing the last known queue</div>
+
+<div id="sheet" hidden><div id="sheetBody"></div></div>
+
+<script>
+/* ===========================================================================
+   Configuration
+
+   Both values are public by design and are meant to be here. The publishable
+   key is what the app authenticates with before anyone logs in; it grants
+   nothing on its own. Every table refuses it — see SECURITY-TESTS.md.
+
+   The key that must never appear in this file, or anywhere in this repo, is
+   the secret one. It bypasses every rule in db/schema.sql.
+=========================================================================== */
+const SUPABASE_URL = "https://txnijhgfitfklyjativk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_rJEFL4ZmSL_fWJ2v33rVUg_Ovwcmosw";
+
+const POLL_MS = 3000;          // how often the queue refreshes while on screen
+const DAY_BOUNDARY_HOUR = 3;   // sessions end at 3am, matching app_day_start() in SQL
+const STORE = "porter.session.v1";
+
+/* --- State ------------------------------------------------------------- */
+let session = null;      // { access_token, refresh_token, expires_at, user, loginAt }
+let advisors = [];
+let requests = [];
+let tab = "queue";
+let poller = null;
+let lastFetchOk = true;
+
+/* --- Small helpers ------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+
+// Everything user-typed goes through this before it touches innerHTML. Car
+// codes and notes are free text from a phone; treating them as markup would be
+// a stored-XSS hole affecting everyone who opens the queue.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+const canClaim  = () => !!session?.user && (session.user.can_claim  || session.user.is_manager);
+const canIssue  = () => !!session?.user && (session.user.can_issue  || session.user.is_manager);
+const isManager = () => !!session?.user && session.user.is_manager;
+
+function roleLabel(u) {
+  const parts = [];
+  if (u.is_admin) parts.push("Admin");
+  if (u.is_manager) parts.push("Manager");
+  if (!u.is_manager) {
+    if (u.can_issue) parts.push("Cashier");
+    if (u.can_claim) parts.push("Porter");
+  }
+  return parts.join(" · ") || "No permissions";
+}
+
+function ago(iso) {
+  const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return mins + "m ago";
+  const h = Math.floor(mins / 60);
+  return h < 24 ? `${h}h ${mins % 60}m ago` : `${Math.floor(h / 24)}d ago`;
+}
+
+function clock(iso) {
+  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function dayAndClock(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + clock(iso);
+}
+
+/* The instant the current "day" began — the most recent 3am. Mirrors
+   app_day_start() in db/schema.sql, which is the authority; this copy only
+   decides when to end a session, never what the database will allow. */
+function dayStart() {
+  const d = new Date();
+  d.setHours(DAY_BOUNDARY_HOUR, 0, 0, 0);
+  if (Date.now() < d.getTime()) d.setDate(d.getDate() - 1);
+  return d.getTime();
+}
+
+/* ===========================================================================
+   Network
+=========================================================================== */
+async function api(path, { method = "GET", body, headers = {}, retry = true } = {}) {
+  const res = await fetch(SUPABASE_URL + path, {
+    method,
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: "Bearer " + (session?.access_token || SUPABASE_KEY),
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  // An expired access token looks exactly like a permission failure from here,
+  // so try one silent refresh before concluding the user must sign in again.
+  if (res.status === 401 && retry && session?.refresh_token) {
+    if (await refreshSession()) return api(path, { method, body, headers, retry: false });
+  }
+
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) {
+    const err = new Error(data?.message || data?.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+async function refreshSession() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+    if (!res.ok) return false;
+    const d = await res.json();
+    session.access_token = d.access_token;
+    session.refresh_token = d.refresh_token;
+    session.expires_at = d.expires_at;
+    saveSession();
+    return true;
+  } catch { return false; }
+}
+
+const saveSession = () => localStorage.setItem(STORE, JSON.stringify(session));
+
+function loadSession() {
+  try { session = JSON.parse(localStorage.getItem(STORE) || "null"); } catch { session = null; }
+  // One login per day: anything from before the last 3am is over.
+  if (session && (!session.loginAt || session.loginAt < dayStart())) session = null;
+}
+
+function signOut() {
+  session = null;
+  localStorage.removeItem(STORE);
+  clearInterval(poller); poller = null;
+  requests = []; advisors = []; tab = "queue";
+  $("app").hidden = true;
+  $("login").hidden = false;
+  $("code").value = "";
+  $("loginErr").textContent = "";
+}
+
+/* ===========================================================================
+   Login
+=========================================================================== */
+async function doLogin() {
+  const code = $("code").value.trim();
+  const err = $("loginErr");
+  err.textContent = "";
+
+  if (!/^\d{8}$/.test(code)) { err.textContent = "Enter your 8-digit code."; return; }
+
+  $("loginBtn").disabled = true;
+  $("loginBtn").textContent = "Signing in…";
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/login`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || "Could not sign in");
+
+    session = { ...d, loginAt: Date.now() };
+    saveSession();
+    await start();
+  } catch (e) {
+    err.textContent = e.message;
+    $("code").value = "";
+    $("code").focus();
+  } finally {
+    $("loginBtn").disabled = false;
+    $("loginBtn").textContent = "Sign in";
+  }
+}
+
+/* ===========================================================================
+   Data
+=========================================================================== */
+const SELECT =
+  "*,advisor:service_advisors(id,name,color)," +
+  "issuer:users!requests_issued_by_fkey(name)," +
+  "claimer:users!requests_claimed_by_fkey(name)";
+
+async function loadAdvisors() {
+  advisors = await api("/rest/v1/service_advisors?select=id,name,color" +
+                       "&active=is.true&order=sort_order.asc,name.asc");
+}
+
+async function loadRequests() {
+  // The live queue is everything unfinished, plus enough recent history to fill
+  // the History tab without a second round trip. Older history is fetched only
+  // when that tab asks for it.
+  const since = new Date(Date.now() - 7 * 864e5).toISOString();
+  try {
+    requests = await api(`/rest/v1/requests?select=${SELECT}` +
+      `&or=(status.in.(unclaimed,claimed),created_at.gte.${since})` +
+      `&order=created_at.asc&limit=500`);
+    lastFetchOk = true;
+  } catch (e) {
+    if (e.status === 401) { signOut(); return; }
+    lastFetchOk = false;         // keep showing the last good queue
+  }
+  $("offline").hidden = lastFetchOk;
+}
+
+const byStatus = (s) => requests.filter(r => r.status === s);
+const myClaims = () => requests.filter(r => r.status === "claimed" && r.claimed_by === session.user.id);
+
+/* ===========================================================================
+   Rendering
+=========================================================================== */
+function tabsFor() {
+  const t = [{ id: "queue", label: "Queue", ico: "☰" }];
+  if (canClaim()) t.push({ id: "mycar", label: "My Car", ico: "★" });
+  t.push({ id: "progress", label: "In Progress", ico: "◷" });
+  if (canIssue()) t.push({ id: "issue", label: "Issue", ico: "＋" });
+  t.push({ id: "history", label: "History", ico: "⟲" });
+  return t;
+}
+
+function renderTabs() {
+  const list = tabsFor();
+  if (!list.some(t => t.id === tab)) tab = list[0].id;
+
+  $("tabs").innerHTML = list.map(t => {
+    let badge = "";
+    if (t.id === "queue" && byStatus("unclaimed").length)
+      badge = `<span class="badge">${byStatus("unclaimed").length}</span>`;
+    if (t.id === "mycar" && myClaims().length)
+      badge = `<span class="badge">${myClaims().length}</span>`;
+    return `<button data-tab="${t.id}" aria-current="${t.id === tab}">
+              <span class="ico">${t.ico}</span>${esc(t.label)}${badge}
+            </button>`;
+  }).join("");
+
+  $("tabs").querySelectorAll("button").forEach(b =>
+    b.onclick = () => { tab = b.dataset.tab; render(); });
+}
+
+function card(r, opts = {}) {
+  const color = r.advisor?.color || "#555";
+  return `
+    <button class="card" data-id="${r.id}" style="--advisor:${esc(color)}">
+      <div class="row1">
+        <span class="code">${esc(r.car_code)}</span>
+        <span class="age">${esc(opts.time || ago(r.created_at))}</span>
+      </div>
+      <div class="row2">
+        <span class="badge-dest ${r.destination}">${esc(r.destination)}</span>
+        <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
+      </div>
+      ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
+      ${opts.meta ? `<div class="meta">${esc(opts.meta)}</div>` : ""}
+    </button>`;
+}
+
+function empty(icon, title, sub = "") {
+  return `<div class="empty"><div class="big">${icon}</div><div>${esc(title)}</div>
+          ${sub ? `<div style="font-size:.85rem;margin-top:6px">${esc(sub)}</div>` : ""}</div>`;
+}
+
+function render() {
+  renderTabs();
+  const v = $("view");
+
+  if (tab === "queue") {
+    // Strictly oldest first. Drive and Express carry equal urgency, so nothing
+    // jumps the queue — the top card is always the longest wait.
+    const open = byStatus("unclaimed");
+    v.innerHTML = `<h2 class="title">Unclaimed</h2>` +
+      (open.length
+        ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` + open.map(r => card(r)).join("")
+        : empty("✓", "Nothing waiting", "Every car has been picked up."));
+  }
+
+  else if (tab === "mycar") {
+    const mine = myClaims();
+    if (mine.length === 1) { v.innerHTML = ""; return openDetail(mine[0].id, true); }
+    v.innerHTML = `<h2 class="title">My Cars</h2>` +
+      (mine.length
+        ? `<p class="sub">You have ${mine.length} active. Tap one to finish it.</p>` +
+          mine.map(r => card(r, { time: "claimed " + ago(r.claimed_at) })).join("")
+        : empty("★", "No car claimed", "Take one from the Unclaimed tab."));
+  }
+
+  else if (tab === "progress") {
+    const live = byStatus("claimed");
+    v.innerHTML = `<h2 class="title">In Progress</h2>` +
+      (live.length
+        ? `<p class="sub">${live.length} being delivered right now.</p>` +
+          live.map(r => card(r, {
+            time: "claimed " + ago(r.claimed_at),
+            meta: "Porter: " + (r.claimer?.name || "—"),
+          })).join("")
+        : empty("◷", "Nothing in progress"));
+  }
+
+  else if (tab === "issue") renderIssue();
+  else if (tab === "history") renderHistory();
+
+  v.querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.id));
+}
+
+/* --- Issue --------------------------------------------------------------- */
+let issueDest = "drive";
+
+function renderIssue() {
+  $("view").innerHTML = `
+    <h2 class="title">Issue a Request</h2>
+    <label for="car_code">Car code</label>
+    <input id="car_code" type="text" autocomplete="off" autocapitalize="characters"
+           spellcheck="false" maxlength="20" placeholder="e.g. A4821">
+    <label>Destination</label>
+    <div class="seg">
+      <button data-dest="drive"   aria-pressed="${issueDest === "drive"}">Drive</button>
+      <button data-dest="express" aria-pressed="${issueDest === "express"}">Express</button>
+    </div>
+    <label for="advisor">Service advisor</label>
+    <select id="advisor">
+      <option value="">Choose an advisor…</option>
+      ${advisors.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}
+    </select>
+    <label for="note">Note <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+    <textarea id="note" maxlength="500" placeholder="Customer name, bay number…"></textarea>
+    <button class="btn primary" id="submitReq">Send to porters</button>
+    <div id="issueMsg"></div>`;
+
+  // Toggle in place rather than re-rendering. Rebuilding the form here would
+  // blank the car code, advisor and note the cashier has already typed —
+  // and picking the destination after typing the code is the natural order.
+  $("view").querySelectorAll("[data-dest]").forEach(b => b.onclick = () => {
+    issueDest = b.dataset.dest;
+    $("view").querySelectorAll("[data-dest]").forEach(x =>
+      x.setAttribute("aria-pressed", String(x.dataset.dest === issueDest)));
+  });
+  $("submitReq").onclick = submitRequest;
+}
+
+async function submitRequest() {
+  const code = $("car_code").value.trim();
+  const advisor = $("advisor").value;
+  const note = $("note").value.trim();
+  const msg = $("issueMsg");
+  msg.innerHTML = "";
+
+  if (!code)    { msg.innerHTML = `<div class="msg err">Enter the car code.</div>`; return; }
+  if (!advisor) { msg.innerHTML = `<div class="msg err">Choose a service advisor.</div>`; return; }
+
+  const btn = $("submitReq");
+  btn.disabled = true; btn.textContent = "Sending…";
+  try {
+    await api("/rest/v1/rpc/create_request", { method: "POST", body: {
+      p_car_code: code, p_destination: issueDest, p_advisor_id: advisor, p_note: note || null,
+    }});
+    await loadRequests();
+    issueDest = "drive";
+    renderIssue();
+    $("issueMsg").innerHTML = `<div class="msg ok">${esc(code.toUpperCase())} sent to the porters.</div>`;
+  } catch (e) {
+    msg.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Send to porters";
+  }
+}
+
+/* --- History ------------------------------------------------------------- */
+let hFilters = { advisor: "", cashier: "", porter: "", order: "desc" };
+
+function renderHistory() {
+  const done = requests.filter(r => r.status === "complete" || r.status === "cancelled");
+
+  const names = (key) => [...new Map(done
+    .filter(r => r[key]?.name).map(r => [r[key].name, r[key].name])).values()].sort();
+
+  let list = done.filter(r =>
+    (!hFilters.advisor || r.advisor?.name === hFilters.advisor) &&
+    (!hFilters.cashier || r.issuer?.name === hFilters.cashier) &&
+    (!hFilters.porter  || r.claimer?.name === hFilters.porter));
+
+  list.sort((a, b) => hFilters.order === "desc"
+    ? new Date(b.created_at) - new Date(a.created_at)
+    : new Date(a.created_at) - new Date(b.created_at));
+
+  const sel = (id, label, key, opts) => `
+    <select id="${id}" aria-label="${label}">
+      <option value="">${label}</option>
+      ${opts.map(o => `<option ${hFilters[key] === o ? "selected" : ""}>${esc(o)}</option>`).join("")}
+    </select>`;
+
+  $("view").innerHTML = `
+    <h2 class="title">History</h2>
+    <p class="sub">Finished requests from the last 7 days.</p>
+    <div class="filters">
+      ${sel("fAdvisor", "All advisors", "advisor", names("advisor"))}
+      ${sel("fCashier", "All cashiers", "cashier", names("issuer"))}
+      ${sel("fPorter",  "All porters",  "porter",  names("claimer"))}
+      <select id="fOrder" aria-label="Sort order">
+        <option value="desc" ${hFilters.order === "desc" ? "selected" : ""}>Newest first</option>
+        <option value="asc"  ${hFilters.order === "asc"  ? "selected" : ""}>Oldest first</option>
+      </select>
+    </div>` +
+    (list.length
+      ? list.map(r => card(r, {
+          time: dayAndClock(r.created_at),
+          meta: r.status === "cancelled"
+            ? "Cancelled"
+            : `Delivered by ${r.claimer?.name || "—"} · ${minutesTaken(r)}`,
+        })).join("")
+      : empty("⟲", "Nothing matches", "Try clearing the filters."));
+
+  const bind = (id, key) => $(id).onchange = (e) => {
+    hFilters[key] = e.target.value; renderHistory();
+  };
+  bind("fAdvisor", "advisor"); bind("fCashier", "cashier");
+  bind("fPorter", "porter");   bind("fOrder", "order");
+
+  $("view").querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.id));
+}
+
+function minutesTaken(r) {
+  if (!r.completed_at) return "—";
+  const m = Math.round((new Date(r.completed_at) - new Date(r.created_at)) / 60000);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/* ===========================================================================
+   Detail sheet
+=========================================================================== */
+let sheetId = null;
+let sheetInline = false;
+
+/* A request's detail is shown one of two ways: as a modal sheet over a list,
+   or inline as the whole My Car tab. Which one is in play must be decided
+   here and nowhere else — an earlier version let `sheetInline` and the modal's
+   visibility drift apart, and a stale modal sat on top showing "Mark
+   delivered" for a car that had already been delivered. */
+function openDetail(id, inline = false) {
+  sheetId = id; sheetInline = inline;
+  $("sheet").hidden = inline;      // inline mode always dismisses the modal
+  renderDetail();
+}
+
+function closeSheet() {
+  $("sheet").hidden = true;
+  sheetId = null; sheetInline = false;
+  render();
+}
+
+function renderDetail(message = "") {
+  const r = requests.find(x => x.id === sheetId);
+  if (!r) { closeSheet(); return; }
+
+  const mine = r.claimed_by === session.user.id;
+  const sameDay = r.completed_at && new Date(r.completed_at).getTime() >= dayStart();
+  const actions = [];
+
+  if (r.status === "unclaimed") {
+    if (canClaim()) actions.push(["claim", "Claim this car", "primary"]);
+    if (isManager() || (canIssue() && r.issued_by === session.user.id)) {
+      actions.push(["cancel", "Cancel request", "danger"]);
+    }
+  } else if (r.status === "claimed") {
+    if (mine || isManager()) actions.push(["complete", "Mark delivered", "primary"]);
+    if (mine)        actions.push(["unclaim", "Release it — I claimed this by mistake", ""]);
+    else if (isManager()) actions.push(["unclaim", "Release it (manager)", ""]);
+    if (isManager()) actions.push(["cancel", "Cancel request", "danger"]);
+  } else if (r.status === "complete") {
+    if (isManager() || (mine && sameDay)) actions.push(["reopen", "Reopen — I tapped this by mistake", ""]);
+  }
+
+  const color = r.advisor?.color || "#555";
+  const html = `
+    ${sheetInline ? "" : `<div class="grip"></div>`}
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+      <span class="detail-code">${esc(r.car_code)}</span>
+      <span class="status-pill ${r.status}">${esc(r.status)}</span>
+    </div>
+    <div class="row2" style="display:flex;gap:8px;margin-top:12px;align-items:center;--advisor:${esc(color)}">
+      <span class="badge-dest ${r.destination}">${esc(r.destination)}</span>
+      <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
+    </div>
+    ${r.note ? `<div class="msg info" style="margin-top:14px">${esc(r.note)}</div>` : ""}
+    <dl>
+      <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
+      <div class="kv"><dt>Requested</dt><dd>${esc(dayAndClock(r.created_at))} · ${esc(ago(r.created_at))}</dd></div>
+      ${r.claimed_at ? `<div class="kv"><dt>Claimed by</dt><dd>${esc(r.claimer?.name || "—")} at ${esc(clock(r.claimed_at))}</dd></div>` : ""}
+      ${r.completed_at ? `<div class="kv"><dt>Delivered</dt><dd>${esc(clock(r.completed_at))} · took ${esc(minutesTaken(r))}</dd></div>` : ""}
+      ${r.cancelled_at ? `<div class="kv"><dt>Cancelled</dt><dd>${esc(clock(r.cancelled_at))}</dd></div>` : ""}
+    </dl>
+    <div id="sheetMsg">${message}</div>
+    ${actions.map(([a, label, cls]) =>
+       `<button class="btn ${cls}" data-act="${a}">${esc(label)}</button>`).join("")}
+    ${sheetInline ? "" : `<button class="btn" data-act="close" style="margin-top:18px">Close</button>`}`;
+
+  if (sheetInline) $("view").innerHTML = html;
+  else $("sheetBody").innerHTML = html;
+
+  const root = sheetInline ? $("view") : $("sheetBody");
+  root.querySelectorAll("[data-act]").forEach(b =>
+    b.onclick = () => b.dataset.act === "close" ? closeSheet() : act(b.dataset.act, r));
+}
+
+async function act(action, r) {
+  // The one confirmation in the app. A porter who already has a car and taps
+  // Claim again is usually mis-tapping, but sometimes genuinely doubling up —
+  // so ask rather than forbid.
+  if (action === "claim") {
+    const held = myClaims();
+    if (held.length && !confirm(
+        `You already have ${held.map(x => x.car_code).join(", ")} claimed.\n\n` +
+        `Claim ${r.car_code} as well?`)) return;
+  }
+  if (action === "cancel" && !confirm(`Cancel the request for ${r.car_code}?`)) return;
+
+  const root = sheetInline ? $("view") : $("sheetBody");
+  root.querySelectorAll("[data-act]").forEach(b => b.disabled = true);
+
+  try {
+    await api(`/rest/v1/rpc/${action}_request`, { method: "POST", body: { p_id: r.id } });
+    await loadRequests();
+
+    if (action === "complete" || action === "cancel") {
+      if (sheetInline) { tab = "queue"; render(); } else closeSheet();
+      return;
+    }
+    if (action === "claim") { tab = "mycar"; closeSheet(); return; }
+    if (action === "unclaim") {
+      if (sheetInline) { tab = "queue"; render(); } else closeSheet();
+      return;
+    }
+    renderDetail();
+  } catch (e) {
+    await loadRequests();
+    // 409 is not a failure, it is the race being resolved correctly: someone
+    // else got there first. Say so plainly rather than showing an error.
+    const cls = e.status === 409 ? "info" : "err";
+    renderDetail(`<div class="msg ${cls}">${esc(e.message)}</div>`);
+    renderTabs();
+  }
+}
+
+/* ===========================================================================
+   Boot
+=========================================================================== */
+async function refresh() {
+  if (session && session.loginAt < dayStart()) { signOut(); return; }
+  await loadRequests();
+  if (!session) return;
+  // Decide from state, not from the DOM. Reading `hidden` back off the element
+  // is what let the two get out of step in the first place.
+  if (sheetId && !sheetInline) { renderDetail(); return; }
+
+  // Never rebuild the view out from under someone who is typing. The Issue tab
+  // is a form with no live content to refresh, and re-rendering it every few
+  // seconds wiped the car code, advisor and note mid-entry — which made
+  // issuing a request outright impossible. The badges still update.
+  if (tab === "issue") { renderTabs(); return; }
+
+  // Same reasoning anywhere else a field has focus, such as the history
+  // filters: leave the DOM alone until they are done with it.
+  const busy = document.activeElement;
+  if (busy && /^(INPUT|SELECT|TEXTAREA)$/.test(busy.tagName)) { renderTabs(); return; }
+
+  render();
+}
+
+async function start() {
+  $("login").hidden = true;
+  $("app").hidden = false;
+  $("whoName").textContent = session.user.name;
+  $("whoRole").textContent = roleLabel(session.user);
+  $("adminBtn").hidden = !session.user.is_admin;
+
+  await loadAdvisors();
+  await loadRequests();
+  render();
+
+  clearInterval(poller);
+  poller = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
+}
+
+$("loginBtn").onclick = doLogin;
+$("code").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+$("code").addEventListener("input", e => {
+  e.target.value = e.target.value.replace(/\D/g, "").slice(0, 8);
+});
+$("signOutBtn").onclick = signOut;
+$("adminBtn").onclick = () => alert("The admin dashboard is the next thing being built.");
+$("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
+document.addEventListener("visibilitychange", () => { if (!document.hidden && session) refresh(); });
+
+loadSession();
+if (session) start().catch(signOut); else $("login").hidden = false;
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>

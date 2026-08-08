@@ -1,0 +1,16 @@
+# Supabase project configuration.
+#
+# Only matters if the Supabase CLI is used to deploy. If the function is pasted
+# into the dashboard editor instead, set the same option with the "Verify JWT"
+# toggle on the function's page.
+
+project_id = "txnijhgfitfklyjativk"
+
+[functions.login]
+# OFF, necessarily. This is the endpoint people call *before* they have a token,
+# so demanding one would be circular and nobody could ever log in.
+#
+# It makes the endpoint publicly callable. That is accounted for: the lockout
+# counters in the function are what stand in for authentication, and the code
+# comparison itself happens inside Postgres against salted hashes.
+verify_jwt = false
