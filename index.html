@@ -358,6 +358,70 @@ dl { margin: 16px 0 22px; }
 .status-pill.complete  { background: #1a2029; color: var(--dimmer); }
 .status-pill.cancelled { background: #2a1416; color: var(--danger); }
 
+/* --- Admin ---------------------------------------------------------------- */
+.arow {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+}
+.arow.inactive { opacity: .5; }
+.arow .top { display: flex; align-items: center; gap: 10px; }
+.arow .nm { font-weight: 600; flex: 1; min-width: 0; }
+.arow .sub2 { color: var(--dimmer); font-size: .76rem; margin-top: 2px; }
+
+/* Permission toggles. Big enough to hit with a thumb, and labelled — an
+   unlabelled grid of switches is how somebody gets the wrong one. */
+.perms { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 11px; }
+.perm {
+  display: flex; align-items: center; gap: 9px; min-height: 44px;
+  padding: 6px 11px; border-radius: 9px; font-size: .84rem;
+  background: var(--bg); border: 1px solid var(--line); color: var(--dim);
+}
+.perm input { width: 19px; height: 19px; accent-color: var(--silver); flex: none; }
+.perm.on { color: var(--text); border-color: #3a4049; }
+
+.abtn {
+  min-height: 40px; padding: 0 13px; border-radius: 9px; font-size: .84rem;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--dim);
+}
+.abtn.warn { color: var(--warn); }
+.abtn.danger { color: var(--danger); }
+
+.swatch { width: 22px; height: 22px; border-radius: 6px; flex: none; }
+.keychar {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.15rem; font-weight: 700; width: 30px; text-align: center; flex: none;
+}
+
+/* A code is shown exactly once and then never again. It needs to look like
+   something to write down, not like a status message. */
+.codebox {
+  margin-top: 14px; padding: 16px; border-radius: 12px; text-align: center;
+  background: #10231a; border: 1px solid #1f4d36;
+}
+.codebox .big {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 2.2rem; font-weight: 700; letter-spacing: .18em; color: var(--ok);
+}
+.codebox .warnline { color: var(--warn); font-size: .8rem; margin-top: 8px; }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+.stat {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 11px; padding: 11px 9px; text-align: center;
+}
+.stat .v { font-size: 1.25rem; font-weight: 650; }
+.stat .k { font-size: .68rem; color: var(--dimmer); text-transform: uppercase;
+           letter-spacing: .06em; margin-top: 3px; }
+
+.ranges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.ranges button {
+  min-height: 38px; padding: 0 12px; border-radius: 9px; font-size: .82rem;
+  background: var(--surface); border: 1px solid var(--line); color: var(--dimmer);
+}
+.ranges button[aria-pressed="true"] {
+  background: var(--surface-2); color: var(--text); border-color: #3a4049;
+}
+
 .offline {
   position: fixed; left: 12px; right: 12px; z-index: 80;
   bottom: calc(78px + env(safe-area-inset-bottom));
@@ -712,7 +776,9 @@ function tabsFor() {
 
 function renderTabs() {
   const list = tabsFor();
-  if (!list.some(t => t.id === tab)) tab = list[0].id;
+  // "admin" is reached from the header, not the tab bar, so it is legitimately
+  // absent from this list — don't bounce back to the queue when it is showing.
+  if (tab !== "admin" && !list.some(t => t.id === tab)) tab = list[0].id;
 
   // The queue badge counts every area this person can see, not just the sub-tab
   // they happen to be looking at — otherwise a cashier on the 510 tab would see
@@ -829,6 +895,7 @@ function render() {
 
   else if (tab === "issue") renderIssue();
   else if (tab === "history") renderHistory();
+  else if (tab === "admin")   renderAdmin();
 
   v.querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.id));
 }
@@ -1043,6 +1110,392 @@ function minutesTaken(r) {
 }
 
 /* ===========================================================================
+   Admin
+   ---------------------------------------------------------------------------
+   Almost all of this goes straight through the admin RLS policies in
+   db/schema.sql — ticking permissions, deactivating people, adding and retiring
+   advisors are ordinary writes that the database allows because the caller is
+   the admin. Only two things need the admin Edge Function, because only two
+   things need the secret key: creating a login, and writing a code hash.
+=========================================================================== */
+let adminSection = "staff";     // staff | advisors | history
+let adminUsers   = [];
+let adminAdvs    = [];          // includes retired ones
+let adminHistory = [];
+let adminRange   = "30d";
+let adminBusy    = false;
+
+const RANGES = [
+  { id: "today", label: "Today" },
+  { id: "7d",    label: "7 days" },
+  { id: "30d",   label: "30 days" },
+  { id: "year",  label: "This year" },
+  { id: "all",   label: "All time" },
+];
+
+function rangeStart(id) {
+  const now = new Date();
+  if (id === "today") return new Date(dayStart());        // the 3am boundary, not midnight
+  if (id === "7d")    return new Date(Date.now() - 7 * 864e5);
+  if (id === "30d")   return new Date(Date.now() - 30 * 864e5);
+  if (id === "year")  return new Date(now.getFullYear(), 0, 1);
+  return null;                                            // all time
+}
+
+async function loadAdmin() {
+  // Retired staff and advisors are included: this is the screen where you bring
+  // somebody back, so hiding them here would make that impossible.
+  adminUsers = await api("/rest/v1/users?select=*&order=name.asc");
+  adminAdvs  = await api("/rest/v1/service_advisors?select=*&order=sort_order.asc,name.asc");
+}
+
+async function loadAdminHistory() {
+  const from = rangeStart(adminRange);
+  let q = `/rest/v1/requests?select=${SELECT}&order=created_at.desc&limit=5000`;
+  if (from) q += `&created_at=gte.${from.toISOString()}`;
+  adminHistory = await api(q);
+}
+
+const median = (nums) => {
+  if (!nums.length) return null;
+  const s = [...nums].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+const mins = (a, b) => (a && b) ? (new Date(b) - new Date(a)) / 60000 : null;
+
+function humanMins(v) {
+  if (v == null) return "—";
+  const m = Math.round(v);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function renderAdmin() {
+  const sections = [
+    { id: "staff",    label: "Staff" },
+    { id: "advisors", label: "Advisors" },
+    { id: "history",  label: "History" },
+  ];
+  $("view").innerHTML = `
+    <h2 class="title">Admin</h2>
+    <div class="zonebar">${sections.map(s =>
+      `<button data-sec="${s.id}" aria-current="${s.id === adminSection}">${esc(s.label)}</button>`
+    ).join("")}</div>
+    <div id="adminBody"><p class="sub">Loading…</p></div>`;
+
+  $("view").querySelectorAll("[data-sec]").forEach(b =>
+    b.onclick = () => { adminSection = b.dataset.sec; renderAdmin(); });
+
+  (async () => {
+    try {
+      if (adminSection === "history") await loadAdminHistory();
+      else await loadAdmin();
+    } catch (e) {
+      $("adminBody").innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+      return;
+    }
+    if (adminSection === "staff")    adminStaff();
+    if (adminSection === "advisors") adminAdvisors();
+    if (adminSection === "history")  adminHistoryView();
+  })();
+}
+
+/* --- Staff --------------------------------------------------------------- */
+function adminStaff() {
+  const perm = (u, key, label) => `
+    <label class="perm ${u[key] ? "on" : ""}">
+      <input type="checkbox" data-uid="${u.id}" data-key="${key}" ${u[key] ? "checked" : ""}
+             ${u.is_admin ? "disabled" : ""}>
+      ${esc(label)}
+    </label>`;
+
+  $("adminBody").innerHTML = `
+    <button class="btn primary" id="addUser" style="margin-bottom:16px">Add someone</button>
+    <div id="newUser"></div>
+    <div id="codeShown"></div>
+    ${adminUsers.map(u => `
+      <div class="arow ${u.active ? "" : "inactive"}">
+        <div class="top">
+          <div style="flex:1;min-width:0">
+            <div class="nm">${esc(u.name)}${u.is_admin ? " · Admin" : ""}</div>
+            <div class="sub2">${esc(roleLabel(u))}${u.active ? "" : " · deactivated"}</div>
+          </div>
+          <button class="abtn" data-reset="${u.id}">Reset code</button>
+          <button class="abtn ${u.active ? "danger" : ""}" data-active="${u.id}"
+                  data-to="${u.active ? "false" : "true"}"
+                  ${u.is_admin ? "disabled style=opacity:.4" : ""}>
+            ${u.active ? "Deactivate" : "Reactivate"}
+          </button>
+        </div>
+        <div class="perms">
+          ${perm(u, "can_issue", "Issue requests")}
+          ${perm(u, "is_manager", "Management")}
+          ${perm(u, "can_claim_510", "Claim 510")}
+          ${perm(u, "can_claim_lower", "Claim Lower Lot")}
+        </div>
+        ${u.is_admin ? `<p class="checkhint">The admin account always has everything.
+                        Change it in the database, not here.</p>` : ""}
+      </div>`).join("")}`;
+
+  $("adminBody").querySelectorAll("[data-key]").forEach(box =>
+    box.onchange = async (e) => {
+      const { uid, key } = e.target.dataset;
+      await adminWrite(`/rest/v1/users?id=eq.${uid}`, "PATCH", { [key]: e.target.checked });
+    });
+
+  $("adminBody").querySelectorAll("[data-active]").forEach(b =>
+    b.onclick = async () => {
+      const u = adminUsers.find(x => x.id === b.dataset.active);
+      // Deactivating is the closest thing here to deleting somebody, and it
+      // takes their login away mid-shift if it is the wrong row.
+      if (u.active && !confirm(`Deactivate ${u.name}? They will not be able to sign in.`)) return;
+      await adminWrite(`/rest/v1/users?id=eq.${u.id}`, "PATCH",
+                       { active: b.dataset.to === "true" });
+    });
+
+  $("adminBody").querySelectorAll("[data-reset]").forEach(b =>
+    b.onclick = async () => {
+      const u = adminUsers.find(x => x.id === b.dataset.reset);
+      if (!confirm(`Reset ${u.name}'s code?\n\nTheir current code stops working immediately.`)) return;
+      await adminCall({ action: "reset_code", user_id: u.id });
+    });
+
+  $("addUser").onclick = showAddUser;
+}
+
+function showAddUser() {
+  $("newUser").innerHTML = `
+    <div class="arow">
+      <label for="nuName">Name</label>
+      <input id="nuName" type="text" maxlength="60" placeholder="As it should appear on requests">
+      <div class="perms">
+        <label class="perm"><input type="checkbox" id="nuIssue"> Issue requests</label>
+        <label class="perm"><input type="checkbox" id="nuMgr"> Management</label>
+        <label class="perm"><input type="checkbox" id="nu510"> Claim 510</label>
+        <label class="perm"><input type="checkbox" id="nuLow"> Claim Lower Lot</label>
+      </div>
+      <p class="checkhint">A code is generated and shown once. It is stored hashed —
+        nobody can look it up afterwards, including you.</p>
+      <button class="btn primary" id="nuSave">Create</button>
+      <button class="btn" id="nuCancel">Cancel</button>
+      <div id="nuMsg"></div>
+    </div>`;
+  $("nuCancel").onclick = () => { $("newUser").innerHTML = ""; };
+  $("nuSave").onclick = async () => {
+    const name = $("nuName").value.trim();
+    if (!name) { $("nuMsg").innerHTML = `<div class="msg err">Enter a name.</div>`; return; }
+    await adminCall({
+      action: "create_user", name,
+      can_issue: $("nuIssue").checked,
+      is_manager: $("nuMgr").checked,
+      can_claim_510: $("nu510").checked,
+      can_claim_lower: $("nuLow").checked,
+    });
+  };
+}
+
+/* --- Advisors ------------------------------------------------------------ */
+function adminAdvisors() {
+  const used = new Set(adminAdvs.filter(a => a.active).map(a => a.key_char));
+  const free = [..."0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"].filter(c => !used.has(c));
+
+  $("adminBody").innerHTML = `
+    <p class="sub">The first character of a key tag identifies the advisor.
+       Colours are assigned automatically from the palette.</p>
+    <button class="btn primary" id="addAdv" style="margin-bottom:16px">Add an advisor</button>
+    <div id="newAdv"></div>
+    ${adminAdvs.map(a => `
+      <div class="arow ${a.active ? "" : "inactive"}">
+        <div class="top">
+          <span class="keychar" style="color:${esc(a.color)}">${esc(a.key_char || "—")}</span>
+          <span class="swatch" style="background:${esc(a.color)}"></span>
+          <span class="nm">${esc(a.name)}</span>
+          <button class="abtn ${a.active ? "danger" : ""}" data-adv="${a.id}"
+                  data-to="${a.active ? "false" : "true"}">
+            ${a.active ? "Retire" : "Bring back"}
+          </button>
+        </div>
+        ${a.active ? "" : `<div class="sub2">Retired — their character is free for someone else.</div>`}
+      </div>`).join("")}`;
+
+  $("adminBody").querySelectorAll("[data-adv]").forEach(b =>
+    b.onclick = async () => {
+      const a = adminAdvs.find(x => x.id === b.dataset.adv);
+      if (a.active && !confirm(
+          `Retire ${a.name}?\n\nTags starting with ${a.key_char} will show as Unknown ` +
+          `until somebody else takes that character. Past requests keep their name.`)) return;
+      await adminWrite(`/rest/v1/service_advisors?id=eq.${a.id}`, "PATCH",
+                       { active: b.dataset.to === "true" });
+    });
+
+  $("addAdv").onclick = () => {
+    $("newAdv").innerHTML = `
+      <div class="arow">
+        <label for="naName">Name</label>
+        <input id="naName" type="text" maxlength="60">
+        <label for="naChar">Key tag character</label>
+        <select id="naChar">${free.map(c => `<option>${c}</option>`).join("")}</select>
+        <p class="checkhint">Only characters not already in use are listed.</p>
+        <button class="btn primary" id="naSave">Add</button>
+        <button class="btn" id="naCancel">Cancel</button>
+        <div id="naMsg"></div>
+      </div>`;
+    $("naCancel").onclick = () => { $("newAdv").innerHTML = ""; };
+    $("naSave").onclick = async () => {
+      const name = $("naName").value.trim();
+      if (!name) { $("naMsg").innerHTML = `<div class="msg err">Enter a name.</div>`; return; }
+      // colour omitted on purpose — the database trigger assigns the next free
+      // palette entry, so there is one place that decides colours.
+      await adminWrite("/rest/v1/service_advisors", "POST", {
+        name, key_char: $("naChar").value,
+        sort_order: adminAdvs.length + 1,
+      });
+    };
+  };
+}
+
+/* --- History ------------------------------------------------------------- */
+function adminHistoryView() {
+  const done = adminHistory.filter(r => r.status === "complete");
+  const waits = done.map(r => mins(r.created_at, r.claimed_at)).filter(v => v != null);
+  const totals = done.map(r => mins(r.created_at, r.completed_at)).filter(v => v != null);
+
+  const names = (fn) => [...new Set(adminHistory.map(fn).filter(Boolean))].sort();
+  const sel = (id, label, key, opts) => `
+    <select id="${id}" aria-label="${label}">
+      <option value="">${label}</option>
+      ${opts.map(o => `<option ${hFilters[key] === o ? "selected" : ""}>${esc(o)}</option>`).join("")}
+    </select>`;
+
+  let list = adminHistory.filter(r =>
+    (!hFilters.advisor || advisorOf(r).name === hFilters.advisor) &&
+    (!hFilters.cashier || r.issuer?.name === hFilters.cashier) &&
+    (!hFilters.porter  || r.claimer?.name === hFilters.porter));
+
+  $("adminBody").innerHTML = `
+    <div class="ranges">${RANGES.map(r =>
+      `<button data-range="${r.id}" aria-pressed="${r.id === adminRange}">${esc(r.label)}</button>`
+    ).join("")}</div>
+
+    <div class="stats">
+      <div class="stat"><div class="v">${done.length}</div><div class="k">Delivered</div></div>
+      <div class="stat"><div class="v">${humanMins(median(waits))}</div><div class="k">Median wait</div></div>
+      <div class="stat"><div class="v">${humanMins(median(totals))}</div><div class="k">Median total</div></div>
+    </div>
+
+    <div class="filters">
+      ${sel("aAdvisor", "All advisors", "advisor", names(r => advisorOf(r).name))}
+      ${sel("aCashier", "All cashiers", "cashier", names(r => r.issuer?.name))}
+      ${sel("aPorter",  "All porters",  "porter",  names(r => r.claimer?.name))}
+      <button class="abtn" id="csv">Export CSV</button>
+    </div>
+
+    <p class="sub">${list.length} request${list.length === 1 ? "" : "s"}${
+      rangeStart(adminRange) ? "" : " — everything on record"}.</p>
+    ${list.slice(0, 300).map(r => card(r, {
+        time: dayAndClock(r.created_at),
+        meta: r.status === "complete"
+          ? `Delivered by ${r.claimer?.name || "—"} · ${humanMins(mins(r.created_at, r.completed_at))}`
+          : r.status,
+      })).join("")}
+    ${list.length > 300 ? `<p class="sub" style="text-align:center">
+       Showing the newest 300. Export the CSV for the rest.</p>` : ""}`;
+
+  $("adminBody").querySelectorAll("[data-range]").forEach(b =>
+    b.onclick = () => { adminRange = b.dataset.range; renderAdmin(); });
+
+  const bind = (id, key) => $(id).onchange = (e) => {
+    hFilters[key] = e.target.value; adminHistoryView();
+  };
+  bind("aAdvisor", "advisor"); bind("aCashier", "cashier"); bind("aPorter", "porter");
+  $("csv").onclick = () => exportCsv(list);
+
+  $("adminBody").querySelectorAll(".card").forEach(c =>
+    c.onclick = () => openDetail(c.dataset.id));
+}
+
+function exportCsv(rows) {
+  const head = ["Tag", "Advisor", "Origin", "Destination", "Via wash", "Area",
+                "Status", "Issued by", "Requested", "Claimed by", "Claimed",
+                "Delivered", "Wait (min)", "Total (min)", "Note"];
+  // Quote everything and double any inner quotes — a note containing a comma
+  // would otherwise shift every column after it.
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const body = rows.map(r => [
+    r.car_code, advisorOf(r).name, LOC_LABEL[r.origin] || r.origin,
+    LOC_LABEL[r.destination] || r.destination, r.via_wash ? "yes" : "",
+    r.zone === "510" ? "510" : "Lower Lot", r.status,
+    r.issuer?.name || "", r.created_at, r.claimer?.name || "", r.claimed_at || "",
+    r.completed_at || "",
+    Math.round(mins(r.created_at, r.claimed_at) ?? NaN) || "",
+    Math.round(mins(r.created_at, r.completed_at) ?? NaN) || "",
+    r.note || "",
+  ].map(q).join(","));
+
+  const csv = [head.map(q).join(","), ...body].join("\r\n");
+  const name = `porter-dispatch-${adminRange}-${new Date().toISOString().slice(0, 10)}.csv`;
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* --- Shared admin plumbing ----------------------------------------------- */
+async function adminWrite(path, method, body) {
+  if (adminBusy) return;
+  adminBusy = true;
+  try {
+    // return=representation so we can see WHICH rows changed. A PATCH that RLS
+    // filters to zero rows comes back 204, indistinguishable from success — the
+    // toggle would just quietly flip back on reload with no explanation. Ask
+    // for the rows and check we got one.
+    const rows = await api(path, {
+      method, body, headers: { Prefer: "return=representation" },
+    });
+    if (Array.isArray(rows) && rows.length === 0) {
+      throw new Error("The database refused that change. Are you still signed in as admin?");
+    }
+    await loadAdmin();
+    if (adminSection === "staff") adminStaff(); else adminAdvisors();
+  } catch (e) {
+    alert(e.message);
+    renderAdmin();          // reload from the database rather than trusting the screen
+  } finally { adminBusy = false; }
+}
+
+async function adminCall(payload) {
+  if (adminBusy) return;
+  adminBusy = true;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || "That did not work");
+
+    await loadAdmin();
+    adminStaff();
+    // Shown once, deliberately loud. It cannot be recovered afterwards.
+    $("codeShown").innerHTML = `
+      <div class="codebox">
+        <div style="color:var(--dim);font-size:.85rem">${esc(d.name)}'s code</div>
+        <div class="big">${esc(d.code)}</div>
+        <div class="warnline">Write this down now — it cannot be shown again.</div>
+      </div>`;
+    $("codeShown").scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) {
+    alert(e.message);
+  } finally { adminBusy = false; }
+}
+
+/* ===========================================================================
    Detail sheet
 =========================================================================== */
 let sheetId = null;
@@ -1241,6 +1694,12 @@ async function refresh() {
   // issuing a request outright impossible. The badges still update.
   if (tab === "issue") { renderTabs(); return; }
 
+  // Admin is the same trap, and worse. It has forms, and it shows a newly
+  // created code exactly once — a background re-render would wipe that off the
+  // screen a few seconds after it appeared, and the code cannot be recovered.
+  // Nothing here needs live data anyway; it reloads itself after every write.
+  if (tab === "admin") { renderTabs(); return; }
+
   // Same reasoning anywhere else a field has focus, such as the history
   // filters: leave the DOM alone until they are done with it.
   const busy = document.activeElement;
@@ -1270,7 +1729,7 @@ $("code").addEventListener("input", e => {
   e.target.value = e.target.value.replace(/\D/g, "").slice(0, 8);
 });
 $("signOutBtn").onclick = signOut;
-$("adminBtn").onclick = () => alert("The admin dashboard is the next thing being built.");
+$("adminBtn").onclick = () => { tab = "admin"; render(); };
 $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
 document.addEventListener("visibilitychange", () => { if (!document.hidden && session) refresh(); });
 

@@ -311,6 +311,40 @@ def phase_b():
     # Leave nothing behind in the queue.
     request("/rest/v1/rpc/cancel_request", "POST", {"p_id": rid}, token=manager or cashier)
 
+    # --- The admin function -------------------------------------------------
+    # It holds the secret key, so it is the single most dangerous endpoint in
+    # the system. It must refuse everyone who is not John, including a manager,
+    # who is the closest thing to an admin that exists.
+    print("\n The admin endpoint refuses everyone who is not the admin:")
+
+    def admin_call(payload, token=None):
+        return request("/functions/v1/admin", "POST", payload, token=token)
+
+    probe_new = {"action": "create_user", "name": "Intruder", "is_manager": True}
+    st, body = admin_call(probe_new, token=manager)
+
+    if st == 404:
+        check("admin function is deployed", False,
+              "not found — deploy supabase/functions/admin, then re-run")
+    else:
+        check("manager creates a user", st == 403, f"HTTP {st}")
+        for role in ("porter", "cashier", "lower"):
+            s, _ = admin_call(probe_new, token=tokens.get(role))
+            check(f"{role} creates a user", s == 403, f"HTTP {s}")
+
+        s, _ = admin_call(probe_new)                       # no session at all
+        check("anon creates a user", s in (401, 403), f"HTTP {s}")
+
+        s, _ = admin_call({"action": "reset_code", "user_id": ids.get("porter")},
+                          token=manager)
+        check("manager resets someone's code", s == 403, f"HTTP {s}")
+
+        # And nobody actually got created by any of the above.
+        st2, rows = request("/rest/v1/users?select=id&name=eq.Intruder", token=cashier)
+        check("no account was created by any of those",
+              isinstance(rows, list) and len(rows) == 0,
+              f"{len(rows) if isinstance(rows, list) else '?'} found")
+
     # --- Porter areas -------------------------------------------------------
     # The two queues are separated in the interface, but that is presentation. A
     # 510 porter who never sees a lower lot car in a list can still send the
