@@ -1077,8 +1077,8 @@ function renderHistory() {
     (!hFilters.porter  || r.claimer?.name === hFilters.porter));
 
   list.sort((a, b) => hFilters.order === "desc"
-    ? new Date(b.created_at) - new Date(a.created_at)
-    : new Date(a.created_at) - new Date(b.created_at));
+    ? new Date(finishedAt(b)) - new Date(finishedAt(a))
+    : new Date(finishedAt(a)) - new Date(finishedAt(b)));
 
   const sel = (id, label, key, opts) => `
     <select id="${id}" aria-label="${label}">
@@ -1088,19 +1088,19 @@ function renderHistory() {
 
   $("view").innerHTML = `
     <h2 class="title">History</h2>
-    <p class="sub">Finished requests from the last 7 days.</p>
+    <p class="sub">Finished requests from the last 7 days, most recently finished first.</p>
     <div class="filters">
       ${sel("fAdvisor", "All advisors", "advisor", names("advisor"))}
       ${sel("fCashier", "All cashiers", "cashier", names("issuer"))}
       ${sel("fPorter",  "All porters",  "porter",  names("claimer"))}
       <select id="fOrder" aria-label="Sort order">
-        <option value="desc" ${hFilters.order === "desc" ? "selected" : ""}>Newest first</option>
+        <option value="desc" ${hFilters.order === "desc" ? "selected" : ""}>Recent first</option>
         <option value="asc"  ${hFilters.order === "asc"  ? "selected" : ""}>Oldest first</option>
       </select>
     </div>` +
     (list.length
       ? list.map(r => card(r, {
-          time: dayAndClock(r.created_at),
+          time: dayAndClock(finishedAt(r)),
           meta: r.status === "cancelled"
             ? "Cancelled"
             : `Delivered by ${r.claimer?.name || "—"} · ${minutesTaken(r)}`,
@@ -1115,6 +1115,15 @@ function renderHistory() {
 
   $("view").querySelectorAll(".card").forEach(c => c.onclick = () => openDetail(c.dataset.id));
 }
+
+/* When a request LEFT the queue.
+ *
+ * History is a record of finished work, so this — not created_at — is what it
+ * sorts and timestamps by. A car requested at 07:27 and delivered at 08:21 was
+ * sorted into the 07:27 position, which buried it under everything requested
+ * later, and made a porter who had just delivered five cars unable to find any
+ * of them. */
+const finishedAt = (r) => r.completed_at || r.cancelled_at || r.created_at;
 
 function minutesTaken(r) {
   if (!r.completed_at) return "—";
@@ -1458,10 +1467,16 @@ function adminHistoryView() {
       ${opts.map(o => `<option ${hFilters[key] === o ? "selected" : ""}>${esc(o)}</option>`).join("")}
     </select>`;
 
-  let list = adminHistory.filter(r =>
-    (!hFilters.advisor || advisorOf(r).name === hFilters.advisor) &&
-    (!hFilters.cashier || r.issuer?.name === hFilters.cashier) &&
-    (!hFilters.porter  || r.claimer?.name === hFilters.porter));
+  // Sorted by when each request FINISHED. The fetch orders by created_at, which
+  // put a car requested at 07:27 and delivered at 08:21 below everything
+  // requested after 07:27 — so the cars you just delivered are the hardest ones
+  // to find, which is the opposite of what this screen is for.
+  const list = adminHistory
+    .filter(r =>
+      (!hFilters.advisor || advisorOf(r).name === hFilters.advisor) &&
+      (!hFilters.cashier || r.issuer?.name === hFilters.cashier) &&
+      (!hFilters.porter  || r.claimer?.name === hFilters.porter))
+    .sort((a, b) => new Date(finishedAt(b)) - new Date(finishedAt(a)));
 
   $("adminBody").innerHTML = `
     <div class="ranges">${RANGES.map(r =>
@@ -1484,7 +1499,7 @@ function adminHistoryView() {
     <p class="sub">${list.length} request${list.length === 1 ? "" : "s"}${
       rangeStart(adminRange) ? "" : " — everything on record"}.</p>
     ${list.slice(0, 300).map(r => card(r, {
-        time: dayAndClock(r.created_at),
+        time: dayAndClock(finishedAt(r)),
         meta: r.status === "complete"
           ? `Delivered by ${r.claimer?.name || "—"} · ${humanMins(mins(r.created_at, r.completed_at))}`
           : r.status,
