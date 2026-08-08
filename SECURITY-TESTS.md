@@ -8,6 +8,60 @@ Re-run with `python3 tests/security_test.py` after any change to
 
 ---
 
+## 2026-08-08 — full pass after the two porter areas, 54/54
+
+Adds the area rule: every request belongs to the 510 area or the lower lot, decided by
+a generated column from the two locations.
+
+```
+ A porter's area is enforced, not just filtered out of the list:
+  PASS  fixture: porter holds only the 510 area       — 510=True lower=False
+  PASS  fixture: lower holds only the lower lot area  — 510=False lower=True
+  PASS  drive to express is routed to the lower lot   — zone=lower_lot
+  PASS  510 porter claims a lower lot car             — HTTP 403
+  PASS  lower lot porter claims it                    — HTTP 200
+  PASS  525 to wash is routed to 510                  — zone=510
+  PASS  lower lot porter claims a 510 car             — HTTP 403
+  PASS  510 porter claims it                          — HTTP 200
+  PASS  manager claims in either area                 — HTTP 200
+
+54/54 checks passed
+```
+
+Routing verified directly against the database on six journeys:
+
+| Journey | Area |
+| --- | --- |
+| 510 → Express | 510 |
+| 525 → 510 | 510 |
+| 510 → 525 | 510 |
+| Drive → Wash | lower lot |
+| Drive → Wash → Express | lower lot |
+| Express → Drive | lower lot |
+
+A wash stop does not change the area — it is a waypoint, not an endpoint.
+
+### A failure that was not a failure
+
+The first run reported *"510 porter claims a lower lot car — HTTP 200"* as a security
+breach. It was not. `Test Porter` held **both** areas, so the 200 was correct: the rule
+worked and the test data was wrong. The cause was two of my own decisions colliding —
+the migration deliberately widens every existing claimer to both areas (safer than
+guessing), and `seed.py` then skipped the account as "already exists" and never narrowed
+it back.
+
+Fixed in both places, because either alone leaves the trap set:
+
+- `seed.py` now corrects permissions on existing **test** accounts rather than skipping
+  them. Not applied to the admin account, so re-seeding never restores a permission John
+  removed from himself.
+- The suite verifies each test porter holds exactly one area **before** asserting
+  anything about areas, and reports a fixture problem as a fixture problem. It no longer
+  prints "data is reachable by someone who should not reach it" for mis-seeded test data.
+  A suite that raises the same alarm for both teaches people to ignore the alarm.
+
+---
+
 ## 2026-08-07 — full pass, 42/42
 
 Project `txnijhgfitfklyjativk`. Schema applied, login Edge Function deployed, test
