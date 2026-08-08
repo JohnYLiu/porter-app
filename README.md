@@ -32,6 +32,12 @@ from the two locations:
 A wash stop doesn't affect this — the wash is a waypoint, not an endpoint. The `zone`
 column is `generated always as`, so the app never sends it and cannot get it wrong.
 
+**"Lower Lot" is both a location and an area, and they are not the same thing.** A car
+going **510 → Lower Lot** is a *510 job* — one end is 510, so a 510 porter handles it,
+even though it is headed for the lower lot. Only journeys touching neither 510 nor 525
+belong to the lower lot porters. This is easy to get backwards, so there is a test
+pinning it down.
+
 Porters see only their own area's Queue and In Progress; cashiers and managers see both
 via sub-tabs. **The split in the interface is presentation — the refusal is in the
 database.** A 510 porter who never sees a lower lot car in a list can still send the
@@ -46,7 +52,7 @@ months ago.
 ## A request
 
 Car code (letters, digits, or both — stored uppercase), an **origin** and a
-**destination** from the five locations — 510, 525, Express, Drive, Wash — an optional
+**destination** from the six locations — 510, 525, Express, Drive, Wash, Lower Lot — an optional
 **stop at the wash on the way**, a service advisor from John's managed list, and an
 optional note. The issuing cashier and timestamp are attached automatically.
 

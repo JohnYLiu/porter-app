@@ -336,6 +336,22 @@ def phase_b():
     sb, _ = request("/rest/v1/rpc/claim_request", "POST", {"p_id": r2}, token=lower)
     check("lower lot porter claims it", sb == 200, f"HTTP {sb}")
 
+    # 'lower_lot' is a LOCATION as well as an AREA, and they are not the same
+    # thing. A car going FROM the lower lot TO 510 is a 510 job, because one end
+    # is 510 — a 510 porter handles it even though it starts in the lower lot.
+    # Easy to get backwards, so it is pinned down here.
+    status, req4 = request("/rest/v1/rpc/create_request", "POST",
+                           {"p_car_code": "LOCVAREA", "p_origin": "lower_lot",
+                            "p_destination": "510", "p_advisor_id": aid}, token=cashier)
+    if status == 200:
+        row4 = req4 if isinstance(req4, dict) else req4[0]
+        check("lower lot location to 510 is a 510 job",
+              row4.get("zone") == "510", f"zone={row4.get('zone')}")
+        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": row4["id"]},
+                token=manager or cashier)
+    else:
+        check("lower lot is accepted as a location", False, f"HTTP {status}")
+
     # And the reverse: a lower lot porter must not take a 510 job.
     status, req3 = request("/rest/v1/rpc/create_request", "POST",
                            {"p_car_code": "UPPER1", "p_origin": "525",

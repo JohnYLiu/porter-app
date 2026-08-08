@@ -164,8 +164,8 @@ create table if not exists public.requests (
   -- Where the car is now and where it is going. Any of the five locations can
   -- be either, including the same one for both — a car can be moved within a
   -- location, and refusing that would just make cashiers lie to the form.
-  origin       text        not null check (origin      in ('510','525','express','drive','wash')),
-  destination  text        not null check (destination in ('510','525','express','drive','wash')),
+  origin       text        not null check (origin      in ('510','525','express','drive','wash','lower_lot')),
+  destination  text        not null check (destination in ('510','525','express','drive','wash','lower_lot')),
 
   -- A stop at the wash on the way. Deliberately separate from destination:
   -- "drive → wash" and "drive → wash → express" are different journeys, and
@@ -194,6 +194,12 @@ create table if not exists public.requests (
   -- The rule: if EITHER end of the journey is 510 or 525, it is a 510 job.
   -- Otherwise it is lower lot. A wash stop does not change this — the wash is a
   -- waypoint, not an endpoint.
+  --
+  -- WORTH READING TWICE: 'lower_lot' is both a LOCATION and an AREA, and they
+  -- are not the same thing. A car going 510 → Lower Lot is a 510 job, because
+  -- one end is 510 — it is handled by a 510 porter even though it is headed for
+  -- the lower lot. Only journeys that touch neither 510 nor 525 belong to the
+  -- lower lot porters.
   zone text generated always as (
     case when origin      in ('510','525')
            or destination in ('510','525') then '510'
@@ -283,12 +289,12 @@ alter table public.requests alter column origin set not null;
 
 alter table public.requests drop constraint if exists requests_origin_check;
 alter table public.requests add  constraint requests_origin_check
-  check (origin in ('510','525','express','drive','wash'));
+  check (origin in ('510','525','express','drive','wash','lower_lot'));
 
 -- Destination used to allow only drive and express.
 alter table public.requests drop constraint if exists requests_destination_check;
 alter table public.requests add  constraint requests_destination_check
-  check (destination in ('510','525','express','drive','wash'));
+  check (destination in ('510','525','express','drive','wash','lower_lot'));
 
 alter table public.requests add column if not exists zone text
   generated always as (

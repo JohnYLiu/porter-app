@@ -45,11 +45,12 @@
   /* The five locations. 510 and 525 are the two blues on purpose: those are
      exactly the two that route a job to the 510 porters, so the colour grouping
      matches the rule. The other three all go to the lower lot. */
-  --loc-510:     #7ab8f5;
-  --loc-525:     #a78bfa;
-  --loc-express: #fbbf24;
-  --loc-drive:   #4ade80;
-  --loc-wash:    #22d3ee;
+  --loc-510:       #7ab8f5;
+  --loc-525:       #a78bfa;
+  --loc-express:   #fbbf24;
+  --loc-drive:     #4ade80;
+  --loc-wash:      #22d3ee;
+  --loc-lower_lot: #f472b6;
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
 }
@@ -206,11 +207,12 @@ h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spac
    it: 510 and 525 — the two that send a job to the 510 porters — are the two
    blues. Everything else, which goes to the lower lot, is a different family.
    The grouping is doing real work here, not decoration. */
-.loc-510     { color: var(--loc-510); }
-.loc-525     { color: var(--loc-525); }
-.loc-express { color: var(--loc-express); }
-.loc-drive   { color: var(--loc-drive); }
-.loc-wash    { color: var(--loc-wash); }
+.loc-510       { color: var(--loc-510); }
+.loc-525       { color: var(--loc-525); }
+.loc-express   { color: var(--loc-express); }
+.loc-drive     { color: var(--loc-drive); }
+.loc-wash      { color: var(--loc-wash); }
+.loc-lower_lot { color: var(--loc-lower_lot); }
 
 .card .row3 {
   display: flex; align-items: center; gap: 8px;
@@ -257,10 +259,10 @@ textarea { min-height: 84px; resize: vertical; }
 #car_code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
             font-size: 1.3rem; letter-spacing: .09em; text-transform: uppercase; }
 
-/* Location pickers. Two columns rather than five across: at 375px, five buttons
-   are 68px each, which is under the comfortable tap target and forces the
-   labels to shrink. Two columns keeps 510/525 paired and Express/Drive paired,
-   which is also how they group in practice. */
+/* Location pickers. Two columns rather than six across: at 375px, six buttons
+   would be 57px each, well under a comfortable tap target and too narrow for
+   "Lower Lot". Two columns keeps 510/525 paired and Express/Drive paired, which
+   is also how they group in practice, and six entries fill three rows exactly. */
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .seg button {
   min-height: var(--tap); border-radius: 11px;
@@ -268,9 +270,6 @@ textarea { min-height: 84px; resize: vertical; }
   font-weight: 650; letter-spacing: .03em;
 }
 .seg button[aria-pressed="true"] { background: var(--silver); color: #000; border-color: var(--silver); }
-/* Wash is the fifth and least used, so it takes the full width on its own row
-   rather than leaving a hole in the grid. */
-.seg button.wide { grid-column: 1 / -1; }
 
 /* Sub-tabs for the two porter areas. */
 .zonebar { display: flex; gap: 6px; margin: 0 0 14px; }
@@ -447,11 +446,12 @@ function canClaimZone(zone) {
 /* The five locations, in the order cashiers use them. The first four are the
    common ones; wash is the tail. */
 const LOCATIONS = [
-  { id: "510",     label: "510" },
-  { id: "525",     label: "525" },
-  { id: "express", label: "Express" },
-  { id: "drive",   label: "Drive" },
-  { id: "wash",    label: "Wash" },
+  { id: "510",       label: "510" },
+  { id: "525",       label: "525" },
+  { id: "express",   label: "Express" },
+  { id: "drive",     label: "Drive" },
+  { id: "wash",      label: "Wash" },
+  { id: "lower_lot", label: "Lower Lot" },
 ];
 const LOC_LABEL = Object.fromEntries(LOCATIONS.map(l => [l.id, l.label]));
 
@@ -810,8 +810,8 @@ const zoneFor = (o, d) =>
 
 function locButtons(kind, selected) {
   return LOCATIONS.map(l =>
-    `<button data-${kind}="${l.id}" aria-pressed="${l.id === selected}"` +
-    `${l.id === "wash" ? ' class="wide"' : ""}>${esc(l.label)}</button>`).join("");
+    `<button data-${kind}="${l.id}" aria-pressed="${l.id === selected}">` +
+    `${esc(l.label)}</button>`).join("");
 }
 
 function renderIssue() {
