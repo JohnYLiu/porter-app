@@ -154,6 +154,30 @@ nav .badge {
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
 
+/* --- The car you are holding ----------------------------------------------
+   Deliberately much larger than a queue card. This is the one thing a porter
+   mid-delivery needs on screen, so it takes the top of the Queue rather than
+   hiding behind a tab they have to remember to open. */
+.mycar {
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--advisor, var(--line));
+  border-radius: var(--radius);
+  padding: 14px 15px 14px; margin-bottom: 14px;
+  background: var(--surface);
+  background: color-mix(in srgb, var(--advisor, var(--surface)) 13%, var(--surface));
+}
+.mycar .top1 { display: flex; align-items: center; gap: 10px; }
+.mycar .top1 .age { margin-left: auto; color: var(--dimmer);
+                    font-size: .78rem; white-space: nowrap; }
+.mycar .mid {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 7px; padding: 26px 0 24px;
+}
+.mycar .code { font-size: 2.5rem; }
+.mycar .route { font-size: 1rem; }
+.mycar .meta2 { color: var(--dimmer); font-size: .76rem; text-align: center;
+                margin: -14px 0 16px; }
+
 /* --- Request cards -------------------------------------------------------- */
 .card {
   position: relative;
@@ -1075,7 +1099,6 @@ const myClaims = () => requests.filter(r => r.status === "claimed" && r.claimed_
 =========================================================================== */
 function tabsFor() {
   const t = [{ id: "queue", label: "Queue", ico: "☰" }];
-  if (canClaim()) t.push({ id: "mycar", label: "My Car", ico: "★" });
   t.push({ id: "progress", label: "Active", ico: "◷" });
   if (canIssue()) t.push({ id: "issue", label: "Issue", ico: "＋" });
   t.push({ id: "history", label: "History", ico: "⟲" });
@@ -1099,8 +1122,6 @@ function renderTabs() {
     let badge = "";
     if (t.id === "queue" && waiting)
       badge = `<span class="badge">${waiting}</span>`;
-    if (t.id === "mycar" && myClaims().length)
-      badge = `<span class="badge">${myClaims().length}</span>`;
     return `<button data-tab="${t.id}" aria-current="${t.id === tab}">
               <span class="ico">${t.ico}</span>${esc(t.label)}${badge}
             </button>`;
@@ -1181,6 +1202,55 @@ function bindZoneBar() {
     b.onclick = () => { zone = b.dataset.zone; render(); });
 }
 
+/* The car (or cars) this person is holding, rendered large at the top of the
+   Queue. One panel each — somebody holding three cars scrolls past three of
+   them to reach the queue, which is the correct order of business. */
+function myCarPanels(mine) {
+  if (!mine.length) return "";
+
+  const heading = mine.length === 1
+    ? "Your car"
+    : `Your cars · ${mine.length}`;
+
+  return `<h2 class="title">${esc(heading)}</h2>` + mine.map(r => {
+    const adv = advisorOf(r);
+    return `
+      <div class="mycar" style="--advisor:${esc(adv.color)}">
+        <div class="top1">
+          <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
+          <span class="age">claimed ${esc(ago(r.claimed_at))}</span>
+        </div>
+        <div class="mid">
+          <div class="code">${esc(r.car_code)}</div>
+          <div class="route">${routeHtml(r)}</div>
+        </div>
+        ${r.note ? `<div class="msg info" style="margin:0 0 14px">${esc(r.note)}</div>` : ""}
+        <div class="meta2">Requested by ${esc(r.issuer?.name || "—")} ·
+          ${esc(ago(r.created_at))}</div>
+        <button class="btn primary" data-car="${r.id}" data-do="complete">Mark delivered</button>
+        <button class="btn" data-car="${r.id}" data-do="unclaim">Release it — I claimed this by mistake</button>
+      </div>`;
+  }).join("");
+}
+
+function bindMyCarPanels() {
+  $("view").querySelectorAll("[data-car]").forEach(b =>
+    b.onclick = async () => {
+      const r = requests.find(x => x.id === b.dataset.car);
+      if (!r) return;
+      // Disable every button on this panel, not just the one pressed: two taps
+      // on "delivered" would send the second into a car that is already done.
+      b.closest(".mycar").querySelectorAll("button").forEach(x => x.disabled = true);
+      try {
+        await api(`/rest/v1/rpc/${b.dataset.do}_request`, { method: "POST", body: { p_id: r.id } });
+      } catch (e) {
+        alert(e.message);
+      }
+      await loadRequests();
+      render();
+    });
+}
+
 function empty(icon, title, sub = "") {
   return `<div class="empty"><div class="big">${icon}</div><div>${esc(title)}</div>
           ${sub ? `<div style="font-size:.85rem;margin-top:6px">${esc(sub)}</div>` : ""}</div>`;
@@ -1191,27 +1261,27 @@ function render() {
   const v = $("view");
 
   if (tab === "queue") {
+    // Whatever this person is currently holding sits at the top — no tab to
+    // remember, no navigation mid-delivery. The unclaimed queue follows below,
+    // area filters and all.
+    const mine = myClaims();
+
     // Strictly oldest first. No location or route jumps the queue — the top
     // card is always the longest wait.
     const all = byStatus("unclaimed");
     const counts = Object.fromEntries(ZONES.map(z => [z.id, all.filter(r => r.zone === z.id).length]));
     const open = inZone(all);
-    v.innerHTML = `<h2 class="title">Unclaimed</h2>` + pushCard() + zoneBar(counts) +
+
+    v.innerHTML =
+      myCarPanels(mine) +
+      `<h2 class="title">Unclaimed</h2>` + pushCard() + zoneBar(counts) +
       (open.length
         ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` + open.map(r => card(r)).join("")
         : empty("✓", "Nothing waiting", "Every car in this area has been picked up."));
-    bindZoneBar();
-    if ($("enablePush")) $("enablePush").onclick = enablePush;
-  }
 
-  else if (tab === "mycar") {
-    const mine = myClaims();
-    if (mine.length === 1) { v.innerHTML = ""; return openDetail(mine[0].id, true); }
-    v.innerHTML = `<h2 class="title">My Cars</h2>` +
-      (mine.length
-        ? `<p class="sub">You have ${mine.length} active. Tap one to finish it.</p>` +
-          mine.map(r => card(r, { time: "claimed " + ago(r.claimed_at) })).join("")
-        : empty("★", "No car claimed", "Take one from the Unclaimed tab."));
+    bindZoneBar();
+    bindMyCarPanels();
+    if ($("enablePush")) $("enablePush").onclick = enablePush;
   }
 
   else if (tab === "progress") {
@@ -2222,7 +2292,7 @@ async function act(action, r) {
       if (sheetInline) { tab = "queue"; render(); } else closeSheet();
       return;
     }
-    if (action === "claim") { tab = "mycar"; closeSheet(); return; }
+    if (action === "claim") { tab = "queue"; closeSheet(); return; }
     if (action === "unclaim") {
       if (sheetInline) { tab = "queue"; render(); } else closeSheet();
       return;
