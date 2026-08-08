@@ -146,6 +146,26 @@ def phase_a():
         # this caller, which is what we want for the two login functions.
         check(f"anon call {fn}()", status >= 400, f"HTTP {status}")
 
+    # Every helper too, not just the obvious ones. PostgreSQL grants EXECUTE on
+    # a new function to PUBLIC by default, so a function added later is exposed
+    # to anonymous callers until somebody remembers to revoke it — and these are
+    # SECURITY DEFINER, so they read straight past RLS.
+    #
+    # advisor_for_code was exactly this: anonymously callable, and it answered
+    # "is key character 5 assigned?" about a table anon cannot otherwise see.
+    print("\n Helper functions are not reachable without a login either:")
+    for fn, args in [
+        ("advisor_for_code",        {"p_code": "1A47"}),
+        ("advisor_palette",         {}),
+        ("next_free_advisor_color", {}),
+        ("app_day_start",           {}),
+        ("app_is_admin",            {}),
+        ("app_is_active",           {}),
+        ("app_can_claim_zone",      {"p_zone": "510"}),
+    ]:
+        status, body = request(f"/rest/v1/rpc/{fn}", "POST", args)
+        check(f"anon call {fn}()", status >= 400, f"HTTP {status}")
+
 
 # ---------------------------------------------------------------------------
 # PHASE B — logged in, attempting other roles' actions

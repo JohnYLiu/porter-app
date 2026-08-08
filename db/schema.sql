@@ -1070,6 +1070,45 @@ end $$;
 -- tables that must never be read from a phone.
 -- ============================================================================
 
+-- --- Functions: default-deny, then grant back deliberately -----------------
+--
+-- PostgreSQL grants EXECUTE on a NEW function to PUBLIC automatically. That
+-- means every function added to this file in future is exposed to anonymous
+-- callers unless somebody remembers to revoke it, and eventually somebody will
+-- not. This already happened: advisor_for_code() was callable without a login,
+-- and since it is SECURITY DEFINER it read straight past RLS — an anonymous
+-- caller could ask "is key character 5 assigned?" and get an answer about a
+-- table they cannot otherwise see at all.
+--
+-- Sweeping first and granting afterwards makes forgetting safe instead of
+-- dangerous. Note it revokes from PUBLIC, which `authenticated` inherits, so
+-- everything the app genuinely needs is granted again below.
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as sig
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prokind = 'f'
+  loop
+    execute format('revoke all on function %s from public, anon', f.sig);
+  end loop;
+end $$;
+
+-- The permission helpers are named inside the RLS policies, and policy
+-- expressions are evaluated with the CALLER's privileges — without these grants
+-- every policy fails and the app stops working entirely.
+--
+-- They are safe to expose to a logged-in user: each one reports only that
+-- caller's own permissions, which they can already see in their own session.
+grant execute on function public.app_is_active()            to authenticated;
+grant execute on function public.app_is_admin()             to authenticated;
+grant execute on function public.app_can_issue()            to authenticated;
+grant execute on function public.app_can_claim()            to authenticated;
+grant execute on function public.app_can_claim_zone(text)   to authenticated;
+grant execute on function public.app_is_manager()           to authenticated;
+
 revoke all on public.user_codes    from anon, authenticated;
 revoke all on public.login_attempts from anon, authenticated;
 
@@ -1102,10 +1141,11 @@ grant execute on function public.complete_request(uuid)                       to
 grant execute on function public.reopen_request(uuid)                         to authenticated;
 grant execute on function public.cancel_request(uuid)                         to authenticated;
 
--- The admin screen needs to show the palette. It is twelve public hex codes;
--- nothing is revealed by reading it.
-grant execute on function public.advisor_palette()          to authenticated;
-grant execute on function public.next_free_advisor_color()  to authenticated;
+-- advisor_palette() and next_free_advisor_color() are deliberately granted to
+-- NOBODY. The admin screen works out which key characters are free from the
+-- advisor rows it already reads, and colours are assigned by the database
+-- trigger, so nothing outside the database ever needs to call either. A
+-- function nobody calls should not be reachable.
 
 -- The login functions are for the Edge Function alone. If either of these is
 -- ever callable by `anon` or `authenticated`, the six-digit codes are guessable
