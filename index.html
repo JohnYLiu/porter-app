@@ -690,7 +690,7 @@ function loadSession() {
   if (session && (!session.loginAt || session.loginAt < dayStart())) session = null;
 }
 
-function signOut() {
+function signOut(reason = "") {
   session = null;
   localStorage.removeItem(STORE);
   clearInterval(poller); poller = null;
@@ -698,7 +698,9 @@ function signOut() {
   $("app").hidden = true;
   $("login").hidden = false;
   $("code").value = "";
-  $("loginErr").textContent = "";
+  // Being dropped to a blank login screen with no explanation looks like a
+  // fault. Say what happened.
+  $("loginErr").textContent = reason;
 }
 
 /* ===========================================================================
@@ -770,6 +772,43 @@ async function loadRequests() {
     lastFetchOk = false;         // keep showing the last good queue
   }
   $("offline").hidden = lastFetchOk;
+}
+
+/* Re-read the signed-in person's own row on every poll.
+ *
+ * Two jobs, one request:
+ *
+ *   Deactivation.  users_select requires app_is_active(), so a deactivated
+ *   account gets zero rows back — including for itself. Without this they keep
+ *   a working-looking session with empty screens and every action refused,
+ *   which reads as the app being broken rather than as being switched off.
+ *
+ *   Permission changes. Ticking someone's areas or taking away their cashier
+ *   box takes effect within a few seconds instead of at their next login,
+ *   which for a once-a-day code means tomorrow.
+ *
+ * Returns "gone" only on a definite empty answer from the server. A network
+ * failure returns "unknown" and changes nothing: losing signal in the lot must
+ * never sign a porter out mid-delivery.
+ */
+async function checkSelf() {
+  if (!session?.user?.id) return "unknown";
+  let rows;
+  try {
+    rows = await api(`/rest/v1/users?id=eq.${session.user.id}&select=*`);
+  } catch {
+    return "unknown";
+  }
+  if (!Array.isArray(rows)) return "unknown";
+  if (rows.length === 0) return "gone";
+
+  const fresh = rows[0];
+  if (JSON.stringify(fresh) !== JSON.stringify(session.user)) {
+    session.user = fresh;
+    saveSession();
+    return "changed";
+  }
+  return "ok";
 }
 
 const byStatus = (s) => requests.filter(r => r.status === s);
@@ -1800,7 +1839,18 @@ async function act(action, r) {
    Boot
 =========================================================================== */
 async function refresh() {
-  if (session && session.loginAt < dayStart()) { signOut(); return; }
+  if (session && session.loginAt < dayStart()) {
+    signOut("Your session ended for the day. Sign in again.");
+    return;
+  }
+
+  // Before anything else, and before any of the per-tab early returns below, so
+  // it applies whichever screen is open.
+  if (await checkSelf() === "gone") {
+    signOut("Your account has been deactivated. Speak to John.");
+    return;
+  }
+
   await loadRequests();
   if (!session) return;
   // Decide from state, not from the DOM. Reading `hidden` back off the element
@@ -1855,7 +1905,7 @@ $("code").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); }
 $("code").addEventListener("input", e => {
   e.target.value = e.target.value.replace(/\D/g, "").slice(0, 8);
 });
-$("signOutBtn").onclick = signOut;
+$("signOutBtn").onclick = () => signOut();
 $("adminBtn").onclick = () => { tab = "admin"; render(); };
 $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
 // Stamped on real interaction, not on focus alone — focus persists long after a
@@ -1871,7 +1921,7 @@ $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
 document.addEventListener("visibilitychange", () => { if (!document.hidden && session) refresh(); });
 
 loadSession();
-if (session) start().catch(signOut); else $("login").hidden = false;
+if (session) start().catch(() => signOut()); else $("login").hidden = false;
 
 /* Shipping updates to a phone that has this on its Home Screen.
  *
