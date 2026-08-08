@@ -1223,18 +1223,25 @@ function render() {
       ? all.filter(r => r.issued_by === session.user.id)
       : all;
 
+    // Viewing your own requests, the areas are noise: they are all your cars,
+    // and each one already says its route on the card. Splitting them by area
+    // would be a tap that buys nothing. The switcher only appears once you are
+    // looking at everybody's.
+    const splitByArea = !(canIssue() && activeMineOnly);
+
     // Counts follow the filter, so the number on a sub-tab always matches what
     // tapping it would show.
     const counts = Object.fromEntries(ZONES.map(z => [z.id, scoped.filter(r => r.zone === z.id).length]));
-    const live = inZone(scoped);
+    const live = splitByArea ? inZone(scoped) : scoped;
 
-    v.innerHTML = `<h2 class="title">In Progress</h2>` + mineBar(all) + zoneBar(counts) +
+    v.innerHTML = `<h2 class="title">In Progress</h2>` + mineBar(all) +
+      (splitByArea ? zoneBar(counts) : "") +
       (live.length
         ? `<p class="sub">${live.length} being delivered right now.</p>` +
           live.map(r => card(r, { time: "claimed " + ago(r.claimed_at) })).join("")
-        : empty("◷", (canIssue() && activeMineOnly)
-            ? "None of your cars are on the move"
-            : "Nothing in progress in this area"));
+        : empty("◷", splitByArea
+            ? "Nothing in progress in this area"
+            : "None of your cars are on the move"));
     bindZoneBar();
     $("view").querySelectorAll("[data-mine]").forEach(b =>
       b.onclick = () => { activeMineOnly = b.dataset.mine === "1"; render(); });
