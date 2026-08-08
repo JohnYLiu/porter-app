@@ -24,7 +24,13 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v25";
+const CACHE = "porter-v26";
+
+/* Kept separate from CACHE, and NOT cleared on activate. It holds one flag:
+   "a notification was tapped, show the queue". A service worker cannot reach
+   localStorage, and postMessage only works if it can find the window — which on
+   iOS it often cannot. This survives both. */
+const INTENT = "porter-intent";
 
 const SHELL = [
   "./",
@@ -43,7 +49,8 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(
+        keys.filter(k => k !== CACHE && k !== INTENT).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -90,6 +97,16 @@ self.addEventListener("push", (e) => {
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil((async () => {
+    // Leave the flag FIRST, before anything that might not work. On iOS the
+    // system often foregrounds an installed app itself, without matchAll ever
+    // finding the window and without the URL being read — so neither focus()
+    // nor openWindow() is dependable. The app picks this up whenever it next
+    // becomes visible, which covers every one of those paths.
+    try {
+      const c = await caches.open(INTENT);
+      await c.put("/__show-queue", new Response(String(Date.now())));
+    } catch { /* nothing better to do */ }
+
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of clients) {
       if (c.url.startsWith(self.location.origin)) {
@@ -99,6 +116,12 @@ self.addEventListener("notificationclick", (e) => {
     }
     return self.clients.openWindow("./#queue");
   })());
+});
+
+// So the app can report which worker it is actually running — the difference
+// between "the fix does not work" and "the fix has not arrived yet".
+self.addEventListener("message", (e) => {
+  if (e.data?.type === "version") e.ports?.[0]?.postMessage(CACHE);
 });
 
 self.addEventListener("fetch", (e) => {

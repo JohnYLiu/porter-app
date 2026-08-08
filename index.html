@@ -105,6 +105,7 @@ button { cursor: pointer; border: none; background: none; }
 }
 #login button:disabled { opacity: .45; }
 #loginErr { color: var(--danger); min-height: 1.4em; margin: 14px 0 0; text-align: center; font-size: .92rem; }
+#version { color: var(--dimmer); font-size: .68rem; margin: 20px 0 0; letter-spacing: .08em; }
 
 /* --- Shell ---------------------------------------------------------------- */
 #app { min-height: 100%; display: flex; flex-direction: column; }
@@ -458,6 +459,7 @@ dl { margin: 16px 0 22px; }
          maxlength="8" placeholder="········" aria-label="Your 8-digit code">
   <button id="loginBtn">Sign in</button>
   <p id="loginErr" role="alert"></p>
+  <p id="version"></p>
 </div>
 
 <!-- ========================= APP ========================= -->
@@ -935,6 +937,39 @@ function showQueue() {
   $("sheet").hidden = true;
   resetSheetPosition();
   render();
+}
+
+/* Did a notification ask for the queue while we were not listening?
+ *
+ * The worker leaves a flag in a cache rather than relying on postMessage,
+ * because on iOS the system frequently foregrounds an installed app without the
+ * worker ever finding the window. Checked on startup and every time the app
+ * comes back to the foreground, which covers every route in.
+ *
+ * Ignored if older than a minute: a flag left by a notification tapped last
+ * night should not yank someone off the screen they just chose this morning.
+ */
+async function consumeQueueIntent() {
+  try {
+    const cache = await caches.open("porter-intent");
+    const hit = await cache.match("/__show-queue");
+    if (!hit) return;
+    await cache.delete("/__show-queue");
+    if (Date.now() - Number(await hit.text()) < 60000) showQueue();
+  } catch { /* no cache API, nothing to do */ }
+}
+
+// Which service worker is actually running. Reported on the sign-in screen so
+// "it does not work" can be told apart from "it has not arrived yet".
+async function serviceWorkerVersion() {
+  const ctrl = navigator.serviceWorker?.controller;
+  if (!ctrl) return null;
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (e) => resolve(e.data);
+    ctrl.postMessage({ type: "version" }, [ch.port2]);
+    setTimeout(() => resolve(null), 1200);
+  });
 }
 
 async function enablePush() {
@@ -2126,9 +2161,18 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (e) => {
     if (e.data?.type === "show-queue") showQueue();
   });
+  consumeQueueIntent();
 }
 
-document.addEventListener("visibilitychange", () => { if (!document.hidden && session) refresh(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  consumeQueueIntent();          // a notification may have been tapped to get here
+  if (session) refresh();
+});
+
+serviceWorkerVersion().then(v => {
+  $("version").textContent = v ? v : "not installed";
+});
 
 loadSession();
 if (session) start().catch(() => signOut()); else $("login").hidden = false;
