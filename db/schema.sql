@@ -1278,6 +1278,21 @@ grant execute on function public.app_is_manager()           to authenticated;
 revoke all on all tables in schema public from anon;
 alter default privileges in schema public revoke all on tables from anon;
 
+-- --- service_role: say it out loud rather than inheriting it ---------------
+--
+-- The login, admin and notify functions run as service_role. Supabase grants it
+-- everything by default, so this was never written down — and then the sweeps
+-- above took it away, and the login function lost the ability to record who had
+-- signed in. Logins carried on working; only notifications broke, silently,
+-- because "signed in today" is how the app knows who is on shift.
+--
+-- Granting it back explicitly means this file no longer depends on a default
+-- that a later revoke can quietly undo. Section 8 checks it held.
+grant all on all tables    in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+alter default privileges in schema public grant all on tables    to service_role;
+alter default privileges in schema public grant all on sequences to service_role;
+
 -- Kept for authenticated: these two are readable by nobody but the login and
 -- notify functions, which run as service_role.
 revoke all on public.user_codes        from authenticated;
@@ -1363,6 +1378,35 @@ begin
 
   if leaked is not null then
     raise exception 'anon can still read tables: %. Do not deploy.', leaked;
+  end if;
+end $$;
+
+-- And the reverse mistake, which is what actually happened: tightening so far
+-- that the server's own functions cannot do their job.
+--
+-- This one is nastier than a leak, because nothing fails visibly. The login
+-- function could not write login_attempts for weeks; logging in still worked,
+-- and the only symptom was notifications never arriving, which is
+-- indistinguishable from nobody being rostered.
+do $$
+declare missing text;
+begin
+  select string_agg(t.name, ', ' order by t.name)
+    into missing
+    from (values
+      ('public.login_attempts',     'insert'),
+      ('public.login_attempts',     'select'),
+      ('public.push_subscriptions', 'select'),
+      ('public.push_subscriptions', 'delete'),
+      ('public.users',              'insert'),
+      ('public.users',              'select'),
+      ('public.app_secrets',        'select')
+    ) as t(name, priv)
+   where not has_table_privilege('service_role', t.name, t.priv);
+
+  if missing is not null then
+    raise exception
+      'service_role cannot use: %. Logins and notifications would break quietly.', missing;
   end if;
 end $$;
 
