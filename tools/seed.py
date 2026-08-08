@@ -105,12 +105,37 @@ def die(msg):
 
 
 def create_user(name, code, can_issue, can_claim_510, can_claim_lower,
-                is_manager, is_admin=False):
-    """Create the auth login, the profile row, and the hashed code."""
-    status, existing = call(f"/rest/v1/users?select=id,name&name=eq.{urllib.parse.quote(name)}")
+                is_manager, is_admin=False, sync_permissions=False):
+    """Create the auth login, the profile row, and the hashed code.
+
+    With sync_permissions, an account that already exists has its permissions
+    corrected to match this file rather than being left alone. Used for the
+    throwaway test accounts, where this file is the definition of what each one
+    is FOR — the security suite asserts that a 510 test porter holds only the
+    510 area, and a schema migration that widened them silently turned that into
+    a false security failure. Not used for the admin account, so re-seeding
+    never quietly restores a permission John removed from himself.
+    """
+    perms = {
+        "can_issue": can_issue,
+        "can_claim_510": can_claim_510, "can_claim_lower": can_claim_lower,
+        "is_manager": is_manager, "is_admin": is_admin,
+    }
+
+    status, existing = call(
+        f"/rest/v1/users?select=id,name,can_issue,can_claim_510,can_claim_lower,"
+        f"is_manager,is_admin&name=eq.{urllib.parse.quote(name)}")
     if status == 200 and existing:
-        print(f"  · {name} already exists — skipped")
-        return existing[0]["id"]
+        row = existing[0]
+        drift = {k: v for k, v in perms.items() if row.get(k) != v}
+        if sync_permissions and drift:
+            st, _ = call(f"/rest/v1/users?id=eq.{row['id']}", "PATCH", perms)
+            if st not in (200, 204):
+                die(f"Could not correct permissions for {name}: HTTP {st}")
+            print(f"  ✎ {name} — corrected {', '.join(sorted(drift))}")
+        else:
+            print(f"  · {name} already exists — skipped")
+        return row["id"]
 
     # The auth password is random and thrown away. Nothing ever signs in with
     # it: the login function mints sessions through a single-use token instead,
@@ -126,12 +151,7 @@ def create_user(name, code, can_issue, can_claim_510, can_claim_lower,
 
     uid = auth_user["id"]
 
-    status, _ = call("/rest/v1/users", "POST", {
-        "id": uid, "name": name,
-        "can_issue": can_issue,
-        "can_claim_510": can_claim_510, "can_claim_lower": can_claim_lower,
-        "is_manager": is_manager, "is_admin": is_admin,
-    })
+    status, _ = call("/rest/v1/users", "POST", {"id": uid, "name": name, **perms})
     if status not in (200, 201):
         die(f"Created a login for {name} but could not create the profile: HTTP {status}")
 
@@ -178,7 +198,8 @@ def main():
     # --- Test accounts ----------------------------------------------------
     print("\nTest accounts:")
     for name, code, issue, z510, zlower, manager in TEST_USERS:
-        create_user(name, code, issue, z510, zlower, manager)
+        create_user(name, code, issue, z510, zlower, manager,
+                    sync_permissions=True)
 
     # --- Admin ------------------------------------------------------------
     print("\nYour admin account.")

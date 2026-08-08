@@ -152,10 +152,10 @@ def phase_a():
 # ---------------------------------------------------------------------------
 
 def login(code):
-    """Exchange an 8-digit code for a session. Returns (token, user_id)."""
+    """Exchange an 8-digit code for a session. Returns (token, user)."""
     status, body = request("/functions/v1/login", "POST", {"code": code})
     if status == 200 and isinstance(body, dict) and body.get("access_token"):
-        return body["access_token"], (body.get("user") or {}).get("id")
+        return body["access_token"], (body.get("user") or {})
     return None, None
 
 
@@ -175,12 +175,14 @@ def phase_b():
         print("  Fill in TEST_ACCOUNTS at the top of this file after seeding.")
         return
 
-    tokens, ids = {}, {}
+    tokens, ids, users = {}, {}, {}
     for role, code in TEST_ACCOUNTS.items():
-        tok, uid = login(code)
+        tok, user = login(code)
         if not check(f"log in as {role}", tok is not None):
             return
-        tokens[role], ids[role] = tok, uid
+        tokens[role] = tok
+        users[role] = user or {}
+        ids[role] = (user or {}).get("id")
 
     porter, cashier = tokens.get("porter"), tokens.get("cashier")
     porter2, manager = tokens.get("porter2"), tokens.get("manager")
@@ -295,6 +297,28 @@ def phase_b():
         check("lower lot porter available", False, "no 'lower' test account")
         return
 
+    # Check the fixture BEFORE asserting anything about it.
+    #
+    # These tests only mean something if each porter holds exactly one area. The
+    # first time this ran, the migration had widened both test porters to BOTH
+    # areas, so a correct refusal never happened and the suite reported a
+    # security failure that did not exist. A security test that cries wolf over
+    # its own test data is worse than no test — people stop believing it.
+    def one_area_only(role, want_510):
+        u = users.get(role, {})
+        ok = bool(u.get("can_claim_510")) == want_510 and \
+             bool(u.get("can_claim_lower")) == (not want_510)
+        return check(f"fixture: {role} holds only the "
+                     f"{'510' if want_510 else 'lower lot'} area",
+                     ok, f"510={u.get('can_claim_510')} lower={u.get('can_claim_lower')}")
+
+    fixture_ok = one_area_only("porter", True) & one_area_only("lower", False)
+    if not fixture_ok:
+        print("      ^ re-run tools/seed.py; it now corrects test account areas.")
+        print("        The area checks below are skipped — they cannot mean")
+        print("        anything until each test porter holds one area.")
+        return
+
     # drive -> express: neither end is 510 or 525, so this is a lower lot job.
     status, req2 = request("/rest/v1/rpc/create_request", "POST",
                            {"p_car_code": "LOWER1", "p_origin": "drive",
@@ -350,8 +374,19 @@ def main():
         print("\nFAILED:")
         for name, _, detail in failed:
             print(f"  - {name}  {detail}")
-        print("\nA failure here means data is reachable by someone who should")
-        print("not reach it. Do not deploy until this is empty.")
+
+        # Say which kind of failure this is. "Data is reachable by someone who
+        # should not reach it" is the right alarm for a real breach and badly
+        # wrong for a mis-seeded test account — and a suite that raises the same
+        # alarm for both teaches people to ignore it.
+        if all(name.startswith("fixture:") for name, _, _ in failed):
+            print("\nThese are test-data problems, not security failures: the")
+            print("accounts are not set up the way the checks assume, so those")
+            print("checks were skipped rather than run. Re-run tools/seed.py,")
+            print("which corrects test account permissions, then run this again.")
+        else:
+            print("\nA failure here means data is reachable by someone who should")
+            print("not reach it. Do not deploy until this is empty.")
     return 1 if failed else 0
 
 
