@@ -979,13 +979,22 @@ returns text language sql immutable as $$
   select 'https://txnijhgfitfklyjativk.supabase.co/functions/v1/notify'
 $$;
 
--- search_path names only `net` and `extensions` because pg_net lands in one or
--- the other depending on how the project was set up, and unqualified http_post
--- should resolve either way. Neither schema is writable by app roles, and
--- everything else here is fully qualified, so nothing can be shadowed.
+-- net.http_post is FULLY QUALIFIED, and search_path stays empty like every
+-- other function here.
+--
+-- The previous version used `set search_path = 'net, extensions'` and called
+-- http_post unqualified. Quoted that way, PostgreSQL reads the whole string as
+-- ONE schema name — a schema called "net, extensions" — so `net` was never on
+-- the path and the call failed every time with "function http_post does not
+-- exist". The exception handler below caught it, wrote a warning nobody reads,
+-- and let the request through. Notifications simply never fired, while a
+-- direct net.http_post from the SQL editor worked perfectly.
+--
+-- Section 8 now checks net.http_post exists, so a project where pg_net lands
+-- somewhere else fails loudly instead of going quiet.
 create or replace function public.notify_new_request()
 returns trigger
-language plpgsql security definer set search_path = 'net, extensions'
+language plpgsql security definer set search_path = ''
 as $$
 declare v_secret text;
 begin
@@ -998,7 +1007,7 @@ begin
     return new;
   end if;
 
-  perform http_post(
+  perform net.http_post(
     url     := public.notify_url(),
     body    := jsonb_build_object('record', to_jsonb(new)),
     headers := jsonb_build_object(
@@ -1013,6 +1022,8 @@ exception when others then
   return new;
 end;
 $$;
+
+drop function if exists public.debug_notify_now();
 
 drop trigger if exists notify_on_request on public.requests;
 create trigger notify_on_request
@@ -1378,6 +1389,24 @@ begin
 
   if leaked is not null then
     raise exception 'anon can still read tables: %. Do not deploy.', leaked;
+  end if;
+end $$;
+
+-- The notification trigger calls net.http_post, and its exception handler turns
+-- any failure into a warning nobody reads — so if that function is not where
+-- this file expects, notifications stop and nothing anywhere says so. They were
+-- broken this way for hours while every other check passed.
+do $$
+begin
+  if not exists (
+    select 1 from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'net' and p.proname = 'http_post'
+  ) then
+    raise exception
+      'net.http_post not found — pg_net is missing or installed in another '
+      'schema, and notifications would fail silently. Fix the call in '
+      'notify_new_request() to match where it actually lives.';
   end if;
 end $$;
 
