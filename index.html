@@ -818,9 +818,17 @@ function card(r, opts = {}) {
   const adv = advisorOf(r);
   const color = adv.color;
   const porter = r.claimer?.name ? `<span class="porter">${esc(r.claimer.name)}</span>` : "";
-  const bottom = r.note
-    ? `<span class="cardnote">${esc(r.note)}</span>`
-    : (opts.meta ? `<span class="cardnote">${esc(opts.meta)}</span>` : "");
+  // Status wins over the note wherever there is one. In History that line is
+  // what you are scanning — "Delivered by Mark · 42 min" — and letting a note
+  // displace it meant the cards carrying the most context were the only ones
+  // not telling you what happened. The note is still on the request itself.
+  //
+  // The queue and In Progress pass no status, so the note shows there, which is
+  // where it earns its place: "Mrs Chen - bay 4" is what a porter needs before
+  // setting off.
+  const bottom = opts.meta
+    ? `<span class="cardnote">${esc(opts.meta)}</span>`
+    : (r.note ? `<span class="cardnote">${esc(r.note)}</span>` : "");
 
   return `
     <button class="card" data-id="${r.id}" style="--advisor:${esc(color)}">
