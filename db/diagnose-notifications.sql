@@ -68,3 +68,21 @@ select id,
 -- insert into public.app_secrets (key, value)
 -- values ('notify_secret', 'paste-your-secret-here')
 -- on conflict (key) do update set value = excluded.value;
+
+
+-- ----------------------------------------------------------------------------
+-- Who would actually be notified, and why not.
+--
+-- Three things must all be true: they have a device subscribed, their area
+-- label matches the car's area, and they have signed in since the last 3am.
+-- ----------------------------------------------------------------------------
+select u.name,
+       (select count(*) from public.push_subscriptions ps where ps.user_id = u.id) as devices,
+       u.can_claim_510  as label_510,
+       u.can_claim_lower as label_lower,
+       exists (select 1 from public.login_attempts la
+                where la.user_id = u.id and la.succeeded
+                  and la.at >= public.app_day_start())                as signed_in_today
+  from public.users u
+ where u.active
+ order by u.name;
