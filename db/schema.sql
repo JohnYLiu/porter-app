@@ -1188,19 +1188,29 @@ grant execute on function public.app_can_claim()            to authenticated;
 grant execute on function public.app_can_claim_zone(text)   to authenticated;
 grant execute on function public.app_is_manager()           to authenticated;
 
-revoke all on public.user_codes    from anon, authenticated;
-revoke all on public.login_attempts from anon, authenticated;
+-- --- Tables: nothing at all for logged-out callers --------------------------
+--
+-- Swept rather than listed, for the same reason as the functions above. Supabase
+-- grants anon access to every NEW table in this schema by default, so an
+-- enumerated revoke list is a list somebody has to remember to extend — and
+-- push_subscriptions proved the point the day it was added. The check in
+-- section 8 caught it, which is the only reason this is a comment rather than a
+-- table of push endpoints readable by the internet.
+--
+-- Nothing is granted back: anon has no business reading any of it. Every table
+-- also has RLS with no anon policy, so this is the second lock, not the only one.
+revoke all on all tables in schema public from anon;
+alter default privileges in schema public revoke all on tables from anon;
+
+-- Kept for authenticated: these two are readable by nobody but the login and
+-- notify functions, which run as service_role.
+revoke all on public.user_codes        from authenticated;
+revoke all on public.login_attempts    from authenticated;
 
 -- Writes to these go through section 6 only.
-revoke insert, update, delete on public.requests       from anon, authenticated;
-revoke insert, update, delete on public.request_events from anon, authenticated;
-revoke insert, delete         on public.users          from anon, authenticated;
-
--- Nothing at all for logged-out callers.
-revoke all on public.users            from anon;
-revoke all on public.service_advisors from anon;
-revoke all on public.requests         from anon;
-revoke all on public.request_events   from anon;
+revoke insert, update, delete on public.requests       from authenticated;
+revoke insert, update, delete on public.request_events from authenticated;
+revoke insert, delete         on public.users          from authenticated;
 
 -- Operations: logged-in users may call them; the functions themselves decide
 -- whether the caller is allowed to do the thing.
