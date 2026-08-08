@@ -43,6 +43,7 @@ TEST_ACCOUNTS = {
     "porter":  "52594831",   # labelled 510
     "lower":   "84188536",   # labelled Lower Lot
     "cashier": "51936154",
+    "manager": "76434148",
 }
 
 TABLES = [
@@ -206,6 +207,7 @@ def phase_b():
         tokens[role] = tok
         users[role] = user or {}
         ids[role] = (user or {}).get("id")
+        check(f"log in as {role}", True, (user or {}).get("name", ""))
 
     if failed_logins:
         # Work out WHY before crying wolf. A deactivated account cannot log in —
@@ -253,7 +255,7 @@ def phase_b():
         # "UPDATE requires a WHERE clause" guard, so that test never reached the
         # security model at all. Only the stored value settles it.
         for target, label in ((ids.get("porter"), "itself"),
-                              (ids.get("porter2"), "another user")):
+                              (ids.get("lower"), "another user")):
             if not target:
                 continue
             request(f"/rest/v1/users?id=eq.{target}", "PATCH",
@@ -265,7 +267,6 @@ def phase_b():
     # deliberately. Issuing is the one capability that still gates, and the
     # porter check above covers it.
 
-    print("\n Two people, one car:")
     if not (cashier and porter and porter2):
         return
 
@@ -311,6 +312,8 @@ def phase_b():
         check("create a request to race on", False, f"HTTP {status}")
         return
     rid = req["id"] if isinstance(req, dict) else req[0]["id"]
+
+    print("\n Two people, one car:")
 
     # The transition rules only hold if the table itself cannot be written by
     # hand. Verified by reading the status back, for the same reason as above.

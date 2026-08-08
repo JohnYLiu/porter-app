@@ -8,6 +8,55 @@ Re-run with `python3 tests/security_test.py` after any change to
 
 ---
 
+## 2026-08-08 — claiming opened to everyone, 84/84
+
+The 510 and Lower Lot flags became labels rather than permissions. Anyone signed in can
+claim and deliver in either area; **issuing is the only capability that still gates.**
+
+```
+ Claiming is open to everyone, in either area:
+  PASS  drive to express is a lower lot job            — zone=lower_lot
+  PASS  someone labelled 510 claims a lower lot car    — HTTP 200
+  PASS  525 to wash is a 510 job                       — zone=510
+  PASS  someone labelled Lower Lot claims a 510 car    — HTTP 200
+  PASS  a cashier claims a car                         — HTTP 200
+  PASS  a cashier delivers it                          — HTTP 200
+  PASS  lower lot location to 510 is a 510 job         — zone=510
+
+ A claim still belongs to the person who made it:
+  PASS  first person claims it                         — HTTP 200
+  PASS  a second person claims the same car            — HTTP 409: Already claimed by…
+  PASS  somebody else marks it delivered               — HTTP 403
+  PASS  somebody else releases it                      — HTTP 403
+  PASS  a manager releases it                          — HTTP 200
+
+ The admin endpoint refuses everyone who is not the admin:
+  PASS  porter / cashier / lower / manager × create, reset code, delete  — HTTP 403 (12)
+  PASS  anon creates a user / deletes an account       — HTTP 401
+  PASS  no account was created or deleted by any of those
+
+84/84 checks passed
+```
+
+Opening a rule up means its tests have to be rewritten, not deleted: a test asserting a
+rule that no longer exists either fails loudly or, worse, passes for the wrong reason.
+These now assert the opposite of what they used to.
+
+### Three checks that were silently not running
+
+Found by reading the output rather than the count — a check that doesn't run looks
+exactly like one that passed.
+
+- **Successful logins reported nothing.** Only failures were being recorded, so "logged
+  in as four roles" was an assumption, not a result.
+- **"porter makes another user admin" targeted `porter2`**, an account that no longer
+  exists, so the loop skipped it. The privilege-escalation check that matters most was
+  quietly absent.
+- **Manager-only checks fell back to an anonymous call** when no manager account was
+  configured, returning `401` where the test wanted `403` — right answer, wrong reason.
+
+---
+
 ## 2026-08-08 — advisors derived from the key tag, 63/63
 
 Cashiers no longer pick an advisor; the first character of the key tag decides it, in the
