@@ -200,11 +200,16 @@ nav.porterbar .hero::before {
 /* White at rest, not just when selected. This is the tab a porter reaches for
    without looking, so it is the one place in the bar that stays at full
    contrast whatever else is open. */
-nav.porterbar .hero .ico { font-size: 1.6rem; color: #fff; }
+nav.porterbar .hero .ico { font-size: 2.8rem; color: #fff; }
 nav.porterbar .hero .lbl { color: #fff; }
 
+/* Centred on the middle of the visible half-circle — which is 30px above the
+   hero's top edge, given the bar's 6px of padding and its hairline. Centred by
+   translate rather than by a hand-computed offset, so the glyph stays put if
+   its size changes again. */
 nav.porterbar .hero .disc {
-  position: absolute; left: 50%; top: -42px; transform: translateX(-50%);
+  position: absolute; left: 50%; top: -30px;
+  transform: translate(-50%, -50%);
   display: grid; place-items: center;
 }
 
@@ -215,8 +220,17 @@ nav.porterbar .hero .disc {
 nav.porterbar .hero[aria-current="true"] { background: none; }
 nav.porterbar .hero[aria-current="true"]::before { border-color: var(--dim); }
 
-/* The count belongs up in the bump, not trailing the word. */
-nav.porterbar .hero .badge { position: absolute; top: -7px; right: -20px; transform: none; }
+/* The count belongs up in the bump, not trailing the word. It is measured from
+   the hero, which means it has to sit OUTSIDE .disc — an absolute child of the
+   glyph's box measures from the glyph and follows it around, which threw the
+   badge halfway up the screen when the icon grew. It straddles the arc's upper
+   right rather than tucking inside: at this size the icon fills the
+   half-circle, and a badge within the arc would land on top of it. Centred on
+   its own x so a two-digit count grows both ways instead of drifting off. */
+nav.porterbar .hero .badge {
+  position: absolute; left: 72px; top: -54px; right: auto;
+  transform: translateX(-50%);
+}
 
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
@@ -1259,10 +1273,8 @@ function porterTabs(list, waiting) {
   return `<div class="side">${left.map(t => tabBtn(t, waiting)).join("")}</div>` +
     (queue ? `
       <button class="hero" data-tab="${queue.id}" aria-current="${queue.id === tab}">
-        <span class="disc">
-          <span class="ico">${queue.ico}</span>
-          ${waiting ? `<span class="badge">${waiting}</span>` : ""}
-        </span>
+        <span class="disc"><span class="ico">${queue.ico}</span></span>
+        ${waiting ? `<span class="badge">${waiting}</span>` : ""}
         <span class="lbl">${esc(queue.label)}</span>
       </button>` : "") +
     `<div class="side">${right.map(t => tabBtn(t, waiting)).join("")}</div>`;
