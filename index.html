@@ -473,6 +473,39 @@ function visibleZones() {
   return mine.length ? mine : ZONES;   // view-only staff still see both
 }
 
+/* Who a key tag belongs to, for display.
+ *
+ * Mirrors advisor_for_code() in db/schema.sql, but only for the Issue form's
+ * live feedback — what actually gets stored is decided by the database when the
+ * request is created. Three distinct outcomes that all look like "no advisor"
+ * if you are not careful:
+ *
+ *   Tow-In   the tag starts with T; the car was towed in
+ *   N/A      a three-character tag; no advisor was assigned
+ *   Unknown  four characters, first matches nobody — a bad tag, or an advisor
+ *            who has not been added yet. Shown in red because it is the one
+ *            worth looking at.
+ */
+const TAG_TOW  = { name: "Tow-In",  color: "#cbd5e1" };
+const TAG_NONE = { name: "N/A",     color: "#64748b" };
+const TAG_BAD  = { name: "Unknown", color: "#ef4444" };
+
+function advisorForCode(code) {
+  const c = String(code || "").trim().toUpperCase();
+  if (c.length <= 3) return TAG_NONE;
+  if (c[0] === "T")  return TAG_TOW;
+  return advisors.find(a => a.key_char === c[0]) || TAG_BAD;
+}
+
+// For a stored request, prefer what the database recorded — history is a record
+// of who it WAS, and must not shift if a key character is reassigned later.
+function advisorOf(r) {
+  if (r.advisor) return r.advisor;
+  if (r.tag_type === "tow_in") return TAG_TOW;
+  if (r.tag_type === "none")   return TAG_NONE;
+  return TAG_BAD;
+}
+
 /* Renders "510 → Wash → Express".
  *
  * The wash stop is a WAYPOINT, not a destination — that is the whole reason
@@ -636,12 +669,12 @@ async function doLogin() {
    Data
 =========================================================================== */
 const SELECT =
-  "*,advisor:service_advisors(id,name,color)," +
+  "*,advisor:service_advisors(id,name,color,key_char)," +
   "issuer:users!requests_issued_by_fkey(name)," +
   "claimer:users!requests_claimed_by_fkey(name)";
 
 async function loadAdvisors() {
-  advisors = await api("/rest/v1/service_advisors?select=id,name,color" +
+  advisors = await api("/rest/v1/service_advisors?select=id,name,color,key_char" +
                        "&active=is.true&order=sort_order.asc,name.asc");
 }
 
@@ -703,7 +736,8 @@ function renderTabs() {
 }
 
 function card(r, opts = {}) {
-  const color = r.advisor?.color || "#555";
+  const adv = advisorOf(r);
+  const color = adv.color;
   const porter = r.claimer?.name ? `<span class="porter">${esc(r.claimer.name)}</span>` : "";
   const bottom = r.note
     ? `<span class="cardnote">${esc(r.note)}</span>`
@@ -712,7 +746,7 @@ function card(r, opts = {}) {
   return `
     <button class="card" data-id="${r.id}" style="--advisor:${esc(color)}">
       <div class="row1">
-        <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
+        <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
         <span class="age">${esc(opts.time || ago(r.created_at))}</span>
       </div>
       <div class="mid">
@@ -824,9 +858,10 @@ function renderIssue() {
   $("view").innerHTML = `
     <h2 class="title">Issue a Request</h2>
 
-    <label for="car_code">Car code</label>
+    <label for="car_code">Key tag</label>
     <input id="car_code" type="text" autocomplete="off" autocapitalize="characters"
-           spellcheck="false" maxlength="20" placeholder="e.g. A4821">
+           spellcheck="false" maxlength="20" placeholder="e.g. 1A47">
+    <div id="tagWho"></div>
 
     <label>Pick up from</label>
     <div class="seg" id="segOrigin">${locButtons("origin", issueOrigin)}</div>
@@ -842,12 +877,6 @@ function renderIssue() {
     ${washNA ? `<p class="checkhint">The wash is already one end of this trip.</p>` : ""}
 
     <div id="routePreview"></div>
-
-    <label for="advisor">Service advisor</label>
-    <select id="advisor">
-      <option value="">Choose an advisor…</option>
-      ${advisors.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}
-    </select>
 
     <label for="note">Note <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
     <textarea id="note" maxlength="500" placeholder="Customer name, bay number…"></textarea>
@@ -884,6 +913,22 @@ function renderIssue() {
     } else {
       $("routePreview").innerHTML = "";
     }
+
+    // Who the tag belongs to, shown as it is typed. The cashier never picks an
+    // advisor now, so this is their only chance to notice a mistyped tag before
+    // the car is on its way to the wrong person's customer.
+    const code = $("car_code").value.trim();
+    if (!code) { $("tagWho").innerHTML = ""; return; }
+    const a = advisorForCode(code);
+    const bad = a === TAG_BAD;
+    $("tagWho").innerHTML =
+      `<div class="chip" style="--advisor:${esc(a.color)};margin-top:9px;font-size:.9rem">
+         <span class="dot"></span>
+         <span style="color:${bad ? "var(--danger)" : "var(--dim)"}">${esc(a.name)}</span>
+       </div>` +
+      (bad ? `<p class="checkhint" style="color:var(--danger)">
+                No advisor uses "${esc(code[0].toUpperCase())}". Check the tag.
+              </p>` : "");
   };
 
   $("segOrigin").querySelectorAll("[data-origin]").forEach(b =>
@@ -891,6 +936,7 @@ function renderIssue() {
   $("segDest").querySelectorAll("[data-dest]").forEach(b =>
     b.onclick = () => { issueDest = b.dataset.dest; paint(); });
   $("viaWash").onchange = (e) => { issueWash = e.target.checked; paint(); };
+  $("car_code").addEventListener("input", paint);
   $("submitReq").onclick = submitRequest;
 
   paint();
@@ -898,17 +944,18 @@ function renderIssue() {
 
 async function submitRequest() {
   const code = $("car_code").value.trim();
-  const advisor = $("advisor").value;
   const note = $("note").value.trim();
   const msg = $("issueMsg");
   msg.innerHTML = "";
 
   const fail = (t) => { msg.innerHTML = `<div class="msg err">${esc(t)}</div>`; };
-  if (!code)        return fail("Enter the car code.");
+  if (!code)        return fail("Enter the key tag.");
   if (!issueOrigin) return fail("Choose where the car is now.");
   if (!issueDest)   return fail("Choose where it needs to go.");
-  if (!advisor)     return fail("Choose a service advisor.");
 
+  // An unrecognised first character is warned about, not blocked. A cashier
+  // holding a real tag should never be stuck because the advisor list is stale;
+  // the request still needs to reach a porter.
   const btn = $("submitReq");
   btn.disabled = true; btn.textContent = "Sending…";
   try {
@@ -917,7 +964,6 @@ async function submitRequest() {
       p_origin: issueOrigin,
       p_destination: issueDest,
       p_via_wash: issueWash,
-      p_advisor_id: advisor,
       p_note: note || null,
     }});
     const sentTo = zoneFor(issueOrigin, issueDest) === "510" ? "510" : "Lower Lot";
@@ -943,7 +989,7 @@ function renderHistory() {
     .filter(r => r[key]?.name).map(r => [r[key].name, r[key].name])).values()].sort();
 
   let list = done.filter(r =>
-    (!hFilters.advisor || r.advisor?.name === hFilters.advisor) &&
+    (!hFilters.advisor || advisorOf(r).name === hFilters.advisor) &&
     (!hFilters.cashier || r.issuer?.name === hFilters.cashier) &&
     (!hFilters.porter  || r.claimer?.name === hFilters.porter));
 
@@ -1100,7 +1146,8 @@ function renderDetail(message = "") {
     if (isManager() || (mine && sameDay)) actions.push(["reopen", "Reopen — I tapped this by mistake", ""]);
   }
 
-  const color = r.advisor?.color || "#555";
+  const adv = advisorOf(r);
+  const color = adv.color;
   const html = `
     ${sheetInline ? "" : `<div class="grip"></div>`}
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
@@ -1111,7 +1158,7 @@ function renderDetail(message = "") {
       ${routeHtml(r)}
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;align-items:center;--advisor:${esc(color)}">
-      <span class="chip"><span class="dot"></span>${esc(r.advisor?.name || "—")}</span>
+      <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
     </div>
     ${r.note ? `<div class="msg info" style="margin-top:14px">${esc(r.note)}</div>` : ""}
     <dl>

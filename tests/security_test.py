@@ -59,7 +59,7 @@ SECRET_TABLES = ["user_codes", "login_attempts"]
 OPERATIONS = [
     ("create_request",   {"p_car_code": "TEST1", "p_origin": "510",
                           "p_destination": "drive",
-                          "p_advisor_id": "00000000-0000-0000-0000-000000000000"}),
+                          }),
     ("claim_request",    {"p_id": "00000000-0000-0000-0000-000000000000"}),
     ("unclaim_request",  {"p_id": "00000000-0000-0000-0000-000000000000"}),
     ("complete_request", {"p_id": "00000000-0000-0000-0000-000000000000"}),
@@ -197,8 +197,7 @@ def phase_b():
     if porter:
         status, body = request("/rest/v1/rpc/create_request", "POST",
                                {"p_car_code": "X1", "p_origin": "510",
-                                "p_destination": "drive",
-                                "p_advisor_id": "00000000-0000-0000-0000-000000000000"},
+                                "p_destination": "drive"},
                                token=porter)
         check("porter issues a request", status >= 400, f"HTTP {status}")
 
@@ -227,19 +226,44 @@ def phase_b():
     if not (cashier and porter and porter2):
         return
 
-    status, advisors = request("/rest/v1/service_advisors?select=id&active=is.true&limit=1",
-                               token=cashier)
-    if not (isinstance(advisors, list) and advisors):
-        check("find an advisor to file against", False, f"HTTP {status}")
-        return
-    aid = advisors[0]["id"]
+    # --- The key tag decides the advisor ------------------------------------
+    # The cashier no longer picks one, so the derivation is the only thing
+    # standing between a tag and the right person's name on the card.
+    print("\n The key tag decides the advisor:")
+    status, advisors = request(
+        "/rest/v1/service_advisors?select=id,name,key_char&active=is.true", token=cashier)
+    by_char = {a["key_char"]: a["name"] for a in advisors} if isinstance(advisors, list) else {}
+    check("the nine real advisors are loaded", len(by_char) == 9, f"{len(by_char)} found")
+
+    def tag_case(code, want_name, want_type):
+        st, rq = request("/rest/v1/rpc/create_request", "POST",
+                         {"p_car_code": code, "p_origin": "drive",
+                          "p_destination": "express"}, token=cashier)
+        if st != 200:
+            return check(f"tag {code}", False, f"HTTP {st}")
+        row = rq if isinstance(rq, dict) else rq[0]
+        got_name = by_char.get(code[0].upper()) if row.get("advisor_id") else None
+        ok = row.get("tag_type") == want_type and got_name == want_name
+        check(f"tag {code} -> {want_name or want_type}", ok,
+              f"tag_type={row.get('tag_type')} advisor={got_name}")
+        request("/rest/v1/rpc/cancel_request", "POST", {"p_id": row["id"]},
+                token=manager or cashier)
+
+    tag_case("1A47", "Anthony", "advisor")   # first character is the advisor
+    tag_case("0B12", "Jimmy",   "advisor")   # 0 is a real character, not "none"
+    tag_case("AC93", "Igor",    "advisor")   # letters work too
+    tag_case("TD55", None,      "tow_in")    # towed in
+    tag_case("9E1",  None,      "none")      # three characters, no advisor
+    tag_case("TE1",  None,      "none")      # length wins over the T rule
+    tag_case("ZF88", None,      "advisor")   # unmatched character: no advisor,
+                                             # but still a tag that wants one
 
     # Origin 510 makes this a 510 job, so both test porters are entitled to it —
     # otherwise the race below would be decided by area, not by the race.
     status, req = request("/rest/v1/rpc/create_request", "POST",
                           {"p_car_code": "RACE1", "p_origin": "510",
                            "p_destination": "express",
-                           "p_advisor_id": aid}, token=cashier)
+                           }, token=cashier)
     if status != 200:
         check("create a request to race on", False, f"HTTP {status}")
         return
@@ -267,7 +291,7 @@ def phase_b():
 
     s5, _ = request("/rest/v1/rpc/edit_request", "POST",
                     {"p_id": rid, "p_car_code": "EDITED", "p_origin": "510",
-                     "p_destination": "drive", "p_advisor_id": aid}, token=cashier)
+                     "p_destination": "drive"}, token=cashier)
     check("issuing cashier edits it after it was claimed", s5 >= 400, f"HTTP {s5}")
 
     print("\n Reopening is limited to your own delivery:")
@@ -322,7 +346,7 @@ def phase_b():
     # drive -> express: neither end is 510 or 525, so this is a lower lot job.
     status, req2 = request("/rest/v1/rpc/create_request", "POST",
                            {"p_car_code": "LOWER1", "p_origin": "drive",
-                            "p_destination": "express", "p_advisor_id": aid}, token=cashier)
+                            "p_destination": "express"}, token=cashier)
     if status != 200:
         check("create a lower lot request", False, f"HTTP {status}")
         return
@@ -342,7 +366,7 @@ def phase_b():
     # Easy to get backwards, so it is pinned down here.
     status, req4 = request("/rest/v1/rpc/create_request", "POST",
                            {"p_car_code": "LOCVAREA", "p_origin": "lower_lot",
-                            "p_destination": "510", "p_advisor_id": aid}, token=cashier)
+                            "p_destination": "510"}, token=cashier)
     if status == 200:
         row4 = req4 if isinstance(req4, dict) else req4[0]
         check("lower lot location to 510 is a 510 job",
@@ -355,7 +379,7 @@ def phase_b():
     # And the reverse: a lower lot porter must not take a 510 job.
     status, req3 = request("/rest/v1/rpc/create_request", "POST",
                            {"p_car_code": "UPPER1", "p_origin": "525",
-                            "p_destination": "wash", "p_advisor_id": aid}, token=cashier)
+                            "p_destination": "wash"}, token=cashier)
     if status == 200:
         r3 = req3["id"] if isinstance(req3, dict) else req3[0]["id"]
         zone3 = (req3 if isinstance(req3, dict) else req3[0]).get("zone")

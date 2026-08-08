@@ -2,8 +2,8 @@
 """
 Porter Dispatch — first-run seeding.
 
-Creates the service advisor list, four throwaway test accounts, and John's admin
-account. Run once, on your own machine.
+Creates the throwaway test accounts and John's admin account. Service advisors
+come from db/schema.sql, not here. Run once, on your own machine.
 
     export PORTER_SECRET_KEY='sb_secret_...'
     python3 tools/seed.py
@@ -39,20 +39,10 @@ SECRET = os.environ.get("PORTER_SECRET_KEY", "")
 # see them.
 EMAIL_DOMAIN = "porter.invalid"
 
-# Placeholder advisors. Real names go in later through the admin dashboard —
-# that is the whole point of the dashboard, and nothing here needs a developer.
-#
-# Colours are dark enough to carry white text and far enough apart to survive
-# a cracked phone screen in daylight. Past eight or ten advisors this stops
-# working and the display needs rethinking.
-ADVISORS = [
-    ("Alex Rivera",   "#1d4ed8"),
-    ("Dana Brooks",   "#c2410c"),
-    ("Sam Okafor",    "#15803d"),
-    ("Priya Nair",    "#7e22ce"),
-    ("Chris Vaughn",  "#b91c1c"),
-    ("Jordan Ellis",  "#0f766e"),
-]
+# Service advisors are NOT seeded here. They live in db/schema.sql, because the
+# key character that identifies each one is part of how a request is routed, not
+# test data — the derivation in advisor_for_code() is meaningless without them.
+# Colours come from the palette automatically.
 
 # Throwaway accounts, with codes chosen to be obviously fake. Phase B of the
 # security tests logs in as these to prove the roles are enforced by the
@@ -181,19 +171,15 @@ def main():
         die(f"Could not reach the database with that key (HTTP {status}).\n"
             "  Check the key is right and that db/schema.sql has been applied.")
 
-    # --- Advisors ---------------------------------------------------------
-    print("Service advisors:")
-    for i, (name, color) in enumerate(ADVISORS):
-        status, existing = call(
-            f"/rest/v1/service_advisors?select=id&name=eq.{urllib.parse.quote(name)}")
-        if status == 200 and existing:
-            print(f"  · {name} already exists — skipped")
-            continue
-        status, _ = call("/rest/v1/service_advisors", "POST",
-                         {"name": name, "color": color, "sort_order": i})
-        if status not in (200, 201):
-            die(f"Could not create advisor {name}: HTTP {status}")
-        print(f"  ✓ {name}  {color}")
+    # --- Advisors come from schema.sql; just report what is there ---------
+    status, advs = call("/rest/v1/service_advisors?select=name,key_char"
+                        "&active=is.true&order=sort_order.asc")
+    if status == 200 and isinstance(advs, list):
+        print(f"Service advisors ({len(advs)}) — defined in db/schema.sql:")
+        print("  " + ", ".join(f"{a['key_char']}={a['name']}" for a in advs) or "  none")
+        if not advs:
+            die("No service advisors. Run db/schema.sql first — without them,\n"
+                "  every key tag resolves to Unknown.")
 
     # --- Test accounts ----------------------------------------------------
     print("\nTest accounts:")

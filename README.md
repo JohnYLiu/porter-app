@@ -65,6 +65,36 @@ unambiguous either way. Every request is colour-coded
 by advisor, always shown alongside the advisor's name — never colour alone, because
 roughly 1 in 12 men cannot reliably distinguish some of these.
 
+## Service advisors come from the key tag
+
+Cashiers never pick an advisor. **The first character of the four-character key tag is
+the advisor**, and the database derives it when the request is created:
+
+| First character | Advisor | | First character | Advisor |
+| --- | --- | --- | --- | --- |
+| `1` | Anthony | | `8` | Josh |
+| `2` | Mark | | `9` | Jovis |
+| `3` | Johnny | | `0` | Jimmy |
+| `4` | Ralph | | `A` | Igor |
+| `6` | Skip | | | |
+
+Three cases have no advisor, and they are deliberately distinguishable rather than all
+showing as blank:
+
+| Tag | Shows | Meaning |
+| --- | --- | --- |
+| starts with `T` | **Tow-In** | the car was towed in |
+| three characters | **N/A** | no advisor was assigned |
+| first character matches nobody | **Unknown**, in red | a bad tag, or an advisor not yet added |
+
+Length is checked first, so `TE1` is *N/A*, not a tow-in.
+
+An unmatched character is warned about, never blocked — a cashier holding a real tag
+should not be stuck because the advisor list is stale. The request still reaches a porter.
+
+The advisor is **stored** on the request, not looked up live, so history stays a record of
+who it *was*. Reassigning a key character later must not silently rewrite last month.
+
 Service advisors are labels, not users. They never log in.
 
 ## Lifecycle

@@ -138,6 +138,11 @@ create table if not exists public.user_codes (
 create table if not exists public.service_advisors (
   id         uuid primary key default gen_random_uuid(),
   name       text        not null check (length(trim(name)) between 1 and 60),
+
+  -- The first character of a key tag. This is what identifies the advisor —
+  -- cashiers never pick one from a list, it is read off the tag they are
+  -- already holding. One character, unique among active advisors.
+  key_char   text        check (key_char is null or key_char ~ '^[0-9A-Z]$'),
   -- Hex colour, e.g. '#c2410c'. Always displayed alongside the advisor's name,
   -- never as the only signal — roughly 1 in 12 men cannot reliably tell some
   -- of these apart.
@@ -172,7 +177,14 @@ create table if not exists public.requests (
   -- only the second one has somewhere to be afterwards.
   via_wash     boolean     not null default false,
 
-  advisor_id   uuid        not null references public.service_advisors(id),
+  -- Derived from the first character of the key tag when the request is
+  -- created, never chosen. Nullable, because a towed-in car and a tag with no
+  -- advisor assigned genuinely have none.
+  --
+  -- Stored rather than looked up live, so history is a record of who it WAS.
+  -- Reassigning a key character later must not silently rewrite last month's
+  -- requests.
+  advisor_id   uuid        references public.service_advisors(id),
   note         text        check (note is null or length(note) <= 500),
 
   status       text        not null default 'unclaimed'
@@ -204,6 +216,22 @@ create table if not exists public.requests (
     case when origin      in ('510','525')
            or destination in ('510','525') then '510'
          else 'lower_lot' end
+  ) stored,
+
+  -- What the key tag says about who owns the car, independent of whether an
+  -- advisor was matched. Lets the app tell "towed in" apart from "no advisor
+  -- assigned" apart from "first character matches nobody we know" — three
+  -- different things that would otherwise all look like a null advisor.
+  --
+  -- Length is checked FIRST: a three-character tag has no advisor even if it
+  -- happens to begin with T.
+  --
+  -- No upper() here: car_code is uppercased on the way in by create_request and
+  -- edit_request, which are the only paths that write it.
+  tag_type text generated always as (
+    case when length(trim(car_code)) <= 3        then 'none'
+         when left(trim(car_code), 1) = 'T'      then 'tow_in'
+         else                                         'advisor' end
   ) stored,
 
   -- Guard rails so a bug cannot leave a row in a nonsensical shape.
@@ -327,6 +355,28 @@ create index if not exists requests_zone_open_idx
   on public.requests (zone, created_at) where status = 'unclaimed';
 create index if not exists requests_zone_active_idx
   on public.requests (zone, claimed_at) where status = 'claimed';
+
+-- --- advisors are identified by key character, not chosen from a list -------
+alter table public.service_advisors add column if not exists key_char text;
+
+alter table public.service_advisors drop constraint if exists service_advisors_key_char_check;
+alter table public.service_advisors add  constraint service_advisors_key_char_check
+  check (key_char is null or key_char ~ '^[0-9A-Z]$');
+
+-- Unique among ACTIVE advisors only, so retiring someone frees their character
+-- for a successor without having to edit the old row.
+create unique index if not exists service_advisors_key_char_idx
+  on public.service_advisors (key_char) where active and key_char is not null;
+
+-- A towed-in car and a tag with no advisor both genuinely have none.
+alter table public.requests alter column advisor_id drop not null;
+
+alter table public.requests add column if not exists tag_type text
+  generated always as (
+    case when length(trim(car_code)) <= 3   then 'none'
+         when left(trim(car_code), 1) = 'T' then 'tow_in'
+         else                                    'advisor' end
+  ) stored;
 
 
 -- ============================================================================
@@ -493,12 +543,12 @@ $$;
 -- The old two-location signature is dropped rather than left alongside: an
 -- overload that quietly ignores the origin would be a trap.
 drop function if exists public.create_request(text, text, uuid, text);
+drop function if exists public.create_request(text, text, text, text, boolean);
 
 create or replace function public.create_request(
   p_car_code    text,
   p_origin      text,
   p_destination text,
-  p_advisor_id  uuid,
   p_note        text default null,
   p_via_wash    boolean default false
 )
@@ -512,11 +562,6 @@ begin
     raise exception 'You do not have permission to issue requests' using errcode = '42501';
   end if;
 
-  if not exists (select 1 from public.service_advisors
-                 where id = p_advisor_id and active) then
-    raise exception 'Unknown or inactive service advisor' using errcode = '22023';
-  end if;
-
   -- A wash stop is meaningless when the wash is already an endpoint, and
   -- storing it would render as "wash → wash". Drop it rather than refuse the
   -- request: the cashier's intent is clear and unambiguous either way.
@@ -527,7 +572,8 @@ begin
   insert into public.requests
     (car_code, origin, destination, via_wash, advisor_id, note, issued_by)
   values (upper(trim(p_car_code)), p_origin, p_destination, coalesce(p_via_wash, false),
-          p_advisor_id, nullif(trim(coalesce(p_note, '')), ''), v_uid)
+          public.advisor_for_code(p_car_code),
+          nullif(trim(coalesce(p_note, '')), ''), v_uid)
   returning * into v_row;
 
   insert into public.request_events (request_id, event, actor_id)
@@ -540,13 +586,13 @@ $$;
 
 -- --- edit (issuing cashier, while still unclaimed; or any manager) ----------
 drop function if exists public.edit_request(uuid, text, text, uuid, text);
+drop function if exists public.edit_request(uuid, text, text, text, text, boolean);
 
 create or replace function public.edit_request(
   p_id          uuid,
   p_car_code    text,
   p_origin      text,
   p_destination text,
-  p_advisor_id  uuid,
   p_note        text default null,
   p_via_wash    boolean default false
 )
@@ -573,10 +619,6 @@ begin
     raise exception 'A finished request cannot be edited' using errcode = '42501';
   end if;
 
-  if not exists (select 1 from public.service_advisors where id = p_advisor_id and active) then
-    raise exception 'Unknown or inactive service advisor' using errcode = '22023';
-  end if;
-
   if p_origin = 'wash' or p_destination = 'wash' then
     p_via_wash := false;
   end if;
@@ -590,7 +632,8 @@ begin
          origin      = p_origin,
          destination = p_destination,
          via_wash    = coalesce(p_via_wash, false),
-         advisor_id  = p_advisor_id,
+         -- Re-derived: correcting the tag can change whose car it is.
+         advisor_id  = public.advisor_for_code(p_car_code),
          note        = nullif(trim(coalesce(p_note, '')), '')
    where id = p_id
   returning * into v_row;
@@ -900,9 +943,13 @@ $$;
 -- someone and their colour is immediately available again, with nothing to
 -- unbind by hand. Because it returns the least-used rather than only an unused
 -- one, a thirteenth advisor still gets a colour (shared) instead of an error.
+-- VOLATILE, not stable, and that matters. A stable function uses the snapshot
+-- from the start of the statement, so inserting several advisors in one command
+-- would hand every one of them the same colour — each call would be blind to
+-- the rows just created alongside it.
 create or replace function public.next_free_advisor_color()
 returns text
-language sql stable security definer set search_path = '' as $$
+language sql volatile security definer set search_path = '' as $$
   select p.color
     from public.advisor_palette() p
     left join public.service_advisors sa
@@ -937,6 +984,68 @@ drop trigger if exists advisor_color on public.service_advisors;
 create trigger advisor_color
   before insert or update on public.service_advisors
   for each row execute function public.assign_advisor_color();
+
+-- Which advisor a key tag belongs to.
+--
+--   3 characters or fewer -> nobody. No advisor was assigned.
+--   starts with T         -> nobody. The car was towed in.
+--   otherwise             -> the active advisor holding that first character,
+--                            or nobody if it matches none of them.
+--
+-- Returning null for an unmatched character rather than raising is deliberate:
+-- a cashier holding a real tag should never be blocked from getting a car
+-- moved because the advisor list is out of date. The app renders it as
+-- "Unknown" so it is visible instead of silent.
+create or replace function public.advisor_for_code(p_code text)
+returns uuid
+language plpgsql stable security definer set search_path = '' as $$
+declare
+  v_code  text := upper(trim(coalesce(p_code, '')));
+  v_first text;
+begin
+  if length(v_code) <= 3 then return null; end if;
+  v_first := left(v_code, 1);
+  if v_first = 'T' then return null; end if;
+  return (select id from public.service_advisors
+           where active and key_char = v_first limit 1);
+end;
+$$;
+
+-- --- The real advisors ------------------------------------------------------
+--
+-- Replaces the placeholder names used during the build. The old ones carry no
+-- key character, which is exactly what distinguishes them.
+--
+-- Requests pointing at a placeholder are unpicked rather than deleted: they are
+-- test data, but throwing away rows to satisfy a foreign key is a habit worth
+-- not starting. They render as "N/A" afterwards.
+do $$
+begin
+  update public.requests set advisor_id = null
+   where advisor_id in (select id from public.service_advisors where key_char is null);
+
+  delete from public.service_advisors where key_char is null;
+end $$;
+
+-- Inserted one at a time so each picks up the next free palette colour. A
+-- single multi-row insert would give them all the same one.
+do $$
+declare r record;
+begin
+  for r in
+    select * from (values
+      ('Anthony', '1', 1), ('Mark',   '2', 2), ('Johnny', '3', 3),
+      ('Ralph',   '4', 4), ('Skip',   '6', 5), ('Josh',   '8', 6),
+      ('Jovis',   '9', 7), ('Jimmy',  '0', 8), ('Igor',   'A', 9)
+    ) as v(name, key_char, ord)
+  loop
+    if not exists (select 1 from public.service_advisors
+                    where key_char = r.key_char and active) then
+      insert into public.service_advisors (name, key_char, sort_order)
+      values (r.name, r.key_char, r.ord);      -- colour assigned by the trigger
+    end if;
+  end loop;
+end $$;
 
 -- Bring any advisor still on a pre-palette colour onto the palette. Idempotent:
 -- once every advisor holds a palette colour this loop finds nothing to do.
@@ -977,16 +1086,16 @@ revoke all on public.request_events   from anon;
 
 -- Operations: logged-in users may call them; the functions themselves decide
 -- whether the caller is allowed to do the thing.
-revoke all on function public.create_request(text, text, text, uuid, text, boolean)          from public, anon;
-revoke all on function public.edit_request(uuid, text, text, text, uuid, text, boolean)      from public, anon;
+revoke all on function public.create_request(text, text, text, text, boolean)          from public, anon;
+revoke all on function public.edit_request(uuid, text, text, text, text, boolean)      from public, anon;
 revoke all on function public.claim_request(uuid)                             from public, anon;
 revoke all on function public.unclaim_request(uuid)                           from public, anon;
 revoke all on function public.complete_request(uuid)                          from public, anon;
 revoke all on function public.reopen_request(uuid)                            from public, anon;
 revoke all on function public.cancel_request(uuid)                            from public, anon;
 
-grant execute on function public.create_request(text, text, text, uuid, text, boolean)       to authenticated;
-grant execute on function public.edit_request(uuid, text, text, text, uuid, text, boolean)   to authenticated;
+grant execute on function public.create_request(text, text, text, text, boolean)       to authenticated;
+grant execute on function public.edit_request(uuid, text, text, text, text, boolean)   to authenticated;
 grant execute on function public.claim_request(uuid)                          to authenticated;
 grant execute on function public.unclaim_request(uuid)                        to authenticated;
 grant execute on function public.complete_request(uuid)                       to authenticated;
