@@ -383,6 +383,20 @@ def phase_b():
                           token=manager)
         check("manager resets someone's code", s == 403, f"HTTP {s}")
 
+        s, _ = admin_call({"action": "delete_user", "user_id": ids.get("porter")},
+                          token=manager)
+        check("manager deletes an account", s == 403, f"HTTP {s}")
+
+        s, _ = admin_call({"action": "delete_user", "user_id": ids.get("porter")})
+        check("anon deletes an account", s in (401, 403), f"HTTP {s}")
+
+        # Everyone is still here. Deletion is the one action with no undo, so
+        # confirm nothing went missing rather than trusting the status codes.
+        st2, rows = request("/rest/v1/users?select=id", token=cashier)
+        check("no account was deleted by any of those",
+              isinstance(rows, list) and len(rows) >= len(TEST_ACCOUNTS),
+              f"{len(rows) if isinstance(rows, list) else '?'} accounts remain")
+
         # And nobody actually got created by any of the above.
         st2, rows = request("/rest/v1/users?select=id&name=eq.Intruder", token=cashier)
         check("no account was created by any of those",

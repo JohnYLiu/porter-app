@@ -1123,6 +1123,7 @@ let adminUsers   = [];
 let adminAdvs    = [];          // includes retired ones
 let adminHistory = [];
 let adminRange   = "30d";
+let showRetiredStaff = false;
 let adminBusy    = false;
 
 const RANGES = [
@@ -1210,11 +1211,20 @@ function adminStaff() {
       ${esc(label)}
     </label>`;
 
+  // Deactivated people are hidden by default. They are kept forever so their
+  // name stays on the cars they moved, but that is a reason to keep the ROW,
+  // not a reason to make John scroll past it every day.
+  const gone = adminUsers.filter(u => !u.active);
+  const shown = showRetiredStaff ? adminUsers : adminUsers.filter(u => u.active);
+
   $("adminBody").innerHTML = `
     <button class="btn primary" id="addUser" style="margin-bottom:16px">Add someone</button>
     <div id="newUser"></div>
     <div id="codeShown"></div>
-    ${adminUsers.map(u => `
+    ${gone.length ? `<button class="abtn" id="toggleRetired" style="margin-bottom:14px">
+        ${showRetiredStaff ? "Hide" : "Show"} ${gone.length} deactivated
+      </button>` : ""}
+    ${shown.map(u => `
       <div class="arow ${u.active ? "" : "inactive"}">
         <div class="top">
           <div style="flex:1;min-width:0">
@@ -1227,6 +1237,8 @@ function adminStaff() {
                   ${u.is_admin ? "disabled style=opacity:.4" : ""}>
             ${u.active ? "Deactivate" : "Reactivate"}
           </button>
+          ${(!u.active && !u.is_admin)
+            ? `<button class="abtn danger" data-remove="${u.id}">Remove</button>` : ""}
         </div>
         <div class="perms">
           ${perm(u, "can_issue", "Issue requests")}
@@ -1261,6 +1273,20 @@ function adminStaff() {
       await adminCall({ action: "reset_code", user_id: u.id });
     });
 
+  $("adminBody").querySelectorAll("[data-remove]").forEach(b =>
+    b.onclick = async () => {
+      const u = adminUsers.find(x => x.id === b.dataset.remove);
+      if (!confirm(
+          `Remove ${u.name} completely?\n\n` +
+          `This deletes the account rather than deactivating it, and cannot be undone.\n\n` +
+          `If they have ever issued or moved a car, the database will refuse — their ` +
+          `name belongs on those records.`)) return;
+      await adminCall({ action: "delete_user", user_id: u.id }, { silent: true });
+    });
+
+  if ($("toggleRetired")) {
+    $("toggleRetired").onclick = () => { showRetiredStaff = !showRetiredStaff; adminStaff(); };
+  }
   $("addUser").onclick = showAddUser;
 }
 
@@ -1464,7 +1490,7 @@ async function adminWrite(path, method, body) {
   } finally { adminBusy = false; }
 }
 
-async function adminCall(payload) {
+async function adminCall(payload, opts = {}) {
   if (adminBusy) return;
   adminBusy = true;
   try {
@@ -1482,14 +1508,20 @@ async function adminCall(payload) {
 
     await loadAdmin();
     adminStaff();
-    // Shown once, deliberately loud. It cannot be recovered afterwards.
-    $("codeShown").innerHTML = `
-      <div class="codebox">
-        <div style="color:var(--dim);font-size:.85rem">${esc(d.name)}'s code</div>
-        <div class="big">${esc(d.code)}</div>
-        <div class="warnline">Write this down now — it cannot be shown again.</div>
-      </div>`;
-    $("codeShown").scrollIntoView({ behavior: "smooth", block: "center" });
+
+    if (d.code) {
+      // Shown once, deliberately loud. It cannot be recovered afterwards.
+      $("codeShown").innerHTML = `
+        <div class="codebox">
+          <div style="color:var(--dim);font-size:.85rem">${esc(d.name)}'s code</div>
+          <div class="big">${esc(d.code)}</div>
+          <div class="warnline">Write this down now — it cannot be shown again.</div>
+        </div>`;
+      $("codeShown").scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (d.removed) {
+      $("codeShown").innerHTML =
+        `<div class="msg ok">${esc(d.removed)} was removed.</div>`;
+    }
   } catch (e) {
     alert(e.message);
   } finally { adminBusy = false; }

@@ -182,6 +182,62 @@ Deno.serve(async (req) => {
     return json({ id: userId, name: target.name, code });
   }
 
+  // --------------------------------------------------------------------------
+  // delete_user
+  //
+  // Only for accounts with NOTHING behind them — a typo, a test account, someone
+  // added twice. The moment a person has issued or moved a car, deactivating is
+  // the only correct answer: their name is part of the record of who did what,
+  // and removing them would either blank that or take the requests with it.
+  //
+  // The check happens HERE rather than in the interface. A button that isn't
+  // drawn is not a rule.
+  // --------------------------------------------------------------------------
+  if (action === "delete_user") {
+    const userId = String(body.user_id ?? "");
+    if (!userId) return json({ error: "Which person?" }, 400);
+    if (userId === caller.user.id) {
+      return json({ error: "You cannot remove your own account" }, 400);
+    }
+
+    const { data: target } = await admin
+      .from("users").select("id, name, active, is_admin").eq("id", userId).single();
+    if (!target) return json({ error: "No such person" }, 404);
+    if (target.is_admin) return json({ error: "An admin account cannot be removed here" }, 400);
+    if (target.active) {
+      return json({ error: "Deactivate them first, so this cannot happen by accident" }, 400);
+    }
+
+    const countOf = async (table: string, column: string) => {
+      const { count } = await admin
+        .from(table).select("id", { count: "exact", head: true }).eq(column, userId);
+      return count ?? 0;
+    };
+    const [issued, claimed, cancelled, acted] = await Promise.all([
+      countOf("requests", "issued_by"),
+      countOf("requests", "claimed_by"),
+      countOf("requests", "cancelled_by"),
+      countOf("request_events", "actor_id"),
+    ]);
+    const history = issued + claimed + cancelled + acted;
+
+    if (history > 0) {
+      return json({
+        error: `${target.name} appears on ${history} record${history === 1 ? "" : "s"} ` +
+               `and cannot be removed. Deactivated is the right state for them — it ` +
+               `keeps their name on the cars they handled.`,
+      }, 409);
+    }
+
+    // Deleting the auth user cascades to public.users and user_codes.
+    const { error } = await admin.auth.admin.deleteUser(userId);
+    if (error) {
+      console.error("deleteUser failed:", error.message);
+      return json({ error: "Could not remove that account" }, 500);
+    }
+    return json({ removed: target.name });
+  }
+
   return json({ error: "Unknown action" }, 400);
 });
 

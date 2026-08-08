@@ -288,7 +288,10 @@ create table if not exists public.login_attempts (
   ip               text,
   code_fingerprint text,
   succeeded        boolean     not null,
-  user_id          uuid        references public.users(id)
+  -- SET NULL, so a login record never prevents an account from being removed.
+  -- What matters here is the rate-limit history, not whose it was; a mistyped
+  -- account that has only ever logged in should still be deletable.
+  user_id          uuid        references public.users(id) on delete set null
 );
 
 create index if not exists login_attempts_recent_idx on public.login_attempts (at desc);
@@ -355,6 +358,13 @@ create index if not exists requests_zone_open_idx
   on public.requests (zone, created_at) where status = 'unclaimed';
 create index if not exists requests_zone_active_idx
   on public.requests (zone, claimed_at) where status = 'claimed';
+
+-- --- login records must not pin an account in place ------------------------
+-- Originally a plain reference, which blocked deleting anyone who had ever
+-- logged in — including a test account created by mistake.
+alter table public.login_attempts drop constraint if exists login_attempts_user_id_fkey;
+alter table public.login_attempts add  constraint login_attempts_user_id_fkey
+  foreign key (user_id) references public.users(id) on delete set null;
 
 -- --- advisors are identified by key character, not chosen from a list -------
 alter table public.service_advisors add column if not exists key_char text;
