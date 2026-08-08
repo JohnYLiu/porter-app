@@ -30,7 +30,8 @@ select net.http_post(
                                     where key = 'notify_secret'))
 ) as queued;
 
-select pg_sleep(5);
+select pg_sleep(9);   -- pg_net's worker is not instant; too short and you
+                      -- read the PREVIOUS run's answer and misdiagnose it
 
 select (select count(*) from public.login_attempts
          where succeeded and at >= public.app_day_start())        as logins_today,
@@ -38,7 +39,9 @@ select (select count(*) from public.login_attempts
        (select count(*) from public.push_targets('lower_lot'))    as targets_lower,
        (select count(*) from public.push_subscriptions)           as subscriptions,
        r.status_code,
-       left(coalesce(r.content, r.error_msg, '(no body)'), 300)   as response
+       left(coalesce(r.content, r.error_msg, '(no body)'), 300)   as response,
+       r.created                                                  as response_time,
+       now() - r.created                                          as response_age
   from net._http_response r
  order by r.id desc
  limit 1;
