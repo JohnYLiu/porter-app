@@ -8,6 +8,35 @@ Re-run with `python3 tests/security_test.py` after any change to
 
 ---
 
+## 2026-08-08 — advisors derived from the key tag, 63/63
+
+Cashiers no longer pick an advisor; the first character of the key tag decides it, in the
+database. All seven cases verified against the live database:
+
+```
+  PASS  the nine real advisors are loaded  — 9 found
+  PASS  tag 1A47 -> Anthony   — tag_type=advisor advisor=Anthony
+  PASS  tag 0B12 -> Jimmy     — tag_type=advisor advisor=Jimmy
+  PASS  tag AC93 -> Igor      — tag_type=advisor advisor=Igor
+  PASS  tag TD55 -> tow_in    — tag_type=tow_in  advisor=None
+  PASS  tag 9E1  -> none      — tag_type=none    advisor=None
+  PASS  tag TE1  -> none      — tag_type=none    advisor=None
+  PASS  tag ZF88 -> advisor   — tag_type=advisor advisor=None
+
+63/63 checks passed
+```
+
+`0` is a real advisor character (Jimmy), not an empty value. `TE1` is **N/A**, not a
+tow-in — length is checked before the T rule. `ZF88` stores no advisor but still records
+`tag_type = advisor`, which is what makes "Unknown" distinguishable from "N/A".
+
+All nine advisors received **distinct** palette colours. Worth checking explicitly:
+`next_free_advisor_color()` was `STABLE`, meaning it read the snapshot from the start of
+the statement — inserting nine advisors in one command would have given every one of them
+the same colour, silently. It is `VOLATILE` now.
+
+---
+
 ## 2026-08-08 — Lower Lot added as a sixth location, 55/55
 
 Locations are now 510, Lower Lot, Drive, Express, 525, Wash. The added test pins down

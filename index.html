@@ -917,8 +917,11 @@ function renderIssue() {
     // Who the tag belongs to, shown as it is typed. The cashier never picks an
     // advisor now, so this is their only chance to notice a mistyped tag before
     // the car is on its way to the wrong person's customer.
+    // Nothing until three characters. One or two is a tag mid-typing, and
+    // flashing "N/A" at it before settling on a name is noise. Three is a real
+    // answer — that IS a tag with no advisor — so it shows from there.
     const code = $("car_code").value.trim();
-    if (!code) { $("tagWho").innerHTML = ""; return; }
+    if (code.length < 3) { $("tagWho").innerHTML = ""; return; }
     const a = advisorForCode(code);
     const bad = a === TAG_BAD;
     $("tagWho").innerHTML =
