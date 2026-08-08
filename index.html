@@ -58,11 +58,14 @@
      6% of a dark page is not worth a seam down the middle of the tab bar. */
   --navbg:     #0c0d0f;
 
-  /* The bottom safe area, read through a variable rather than env() directly so
-     it can be frozen at runtime — see freezeSafeArea(). iOS changes what env()
-     reports while the app is running, and everything anchored to the bottom of
-     the screen moves when it does. */
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* The bottom safe area, capped.
+     No iPhone has a bottom inset larger than the home indicator's 34px, but iOS
+     will report far more than that under some conditions — a keyboard being one
+     — and everything anchored to the bottom of the screen grows when it does.
+     This was previously frozen at the largest value ever seen, which turned one
+     such spike into a permanent 85px of dead space under the tab bar. A ceiling
+     is the same protection without the memory. */
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 34px);
 
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
@@ -262,15 +265,6 @@ nav.herobar .hero[aria-current="true"]::before { border-color: var(--dim); }
 nav.herobar .hero .badge {
   position: absolute; left: 72px; top: -54px; right: auto;
   transform: translateX(-50%);
-}
-
-/* Measured, never seen. Its height IS the live safe-area inset, which is the
-   only way to read env() from script. Deliberately uses env() and not the
-   variable above, or freezing the variable would freeze the probe with it. */
-#safeProbe {
-  position: fixed; left: 0; bottom: 0; width: 0;
-  height: env(safe-area-inset-bottom, 0px);
-  visibility: hidden; pointer-events: none;
 }
 
 .diag {
@@ -633,8 +627,6 @@ dl { margin: 16px 0 22px; }
 </style>
 </head>
 <body>
-
-<div id="safeProbe" aria-hidden="true"></div>
 
 <!-- ========================= LOGIN ========================= -->
 <div id="login">
@@ -1842,7 +1834,6 @@ function viewportReadout() {
   const vv = window.visualViewport;
   const bar = $("tabs").getBoundingClientRect();
   const app = $("app").getBoundingClientRect();
-  const safe = $("safeProbe") ? $("safeProbe").getBoundingClientRect().height : -1;
   const n = v => Math.round(v);
   return [
     `win ${n(innerWidth)}x${n(innerHeight)}`,
@@ -1850,7 +1841,8 @@ function viewportReadout() {
     `cl ${n(document.documentElement.clientHeight)}`,
     `app ${n(app.top)}..${n(app.bottom)}`,
     `bar ${n(bar.top)}..${n(bar.bottom)} h${n(bar.height)}`,
-    `safe ${n(safe)}`,
+    // The resolved bottom padding, which is where the inset actually shows up.
+    `pad ${getComputedStyle($("tabs")).paddingBottom}`,
     `doc ${n(document.documentElement.scrollHeight)}`,
     (matchMedia("(display-mode: standalone)").matches || navigator.standalone)
       ? "standalone" : "browser",
@@ -2842,53 +2834,6 @@ serviceWorkerVersion().then(async (v) => {
   } catch { /* no cache api */ }
   $("version").textContent = (v || "not installed") + tapped;
 });
-
-/* Pin the bottom safe area to the largest value the device has reported.
- *
- * iOS does not hold env(safe-area-inset-bottom) still. In a Safari tab it reads
- * 0 while the toolbar is expanded and about 34px once the toolbar minimises —
- * which it does the moment a page becomes long enough to scroll. Every tab in
- * this app is a different length, so opening Issue or History made the inset
- * appear and opening Queue or Settings made it vanish again.
- *
- * The tab bar is anchored to the bottom of the screen, so an inset appearing
- * does not pad it — it makes it 34px TALLER, which pushes its top edge, and the
- * half-circle sitting on that edge, 34px up the screen. That is the jump: the
- * bar growing and lurching upward when you change tabs.
- *
- * Taking the maximum means the bar is sized once, early, and then holds still.
- * It can only ever grow, never shrink back, so there is no way to oscillate.
- * Rotation is the one case where a smaller inset is the correct answer, so the
- * peak resets there and is measured again.
- */
-(function freezeSafeArea() {
-  const probe = $("safeProbe");
-  if (!probe) return;
-  let peak = -1, queued = false;
-
-  const read = () => {
-    const h = probe.getBoundingClientRect().height;
-    if (h <= peak) return;
-    peak = h;
-    document.documentElement.style.setProperty("--safe-bottom", peak + "px");
-  };
-
-  // Coalesced: scroll fires continuously, and this reads layout.
-  const schedule = () => {
-    if (queued) return;
-    queued = true;
-    requestAnimationFrame(() => { queued = false; read(); });
-  };
-
-  read();
-  addEventListener("scroll", schedule, { passive: true });
-  addEventListener("resize", schedule);
-  addEventListener("orientationchange", () => {
-    peak = -1;
-    document.documentElement.style.removeProperty("--safe-bottom");
-    setTimeout(read, 350);        // once the rotation has settled
-  });
-})();
 
 loadSession();
 if (session) start().catch(() => signOut()); else $("login").hidden = false;
