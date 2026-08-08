@@ -1083,18 +1083,15 @@ end $$;
 -- Sweeping first and granting afterwards makes forgetting safe instead of
 -- dangerous. Note it revokes from PUBLIC, which `authenticated` inherits, so
 -- everything the app genuinely needs is granted again below.
-do $$
-declare f record;
-begin
-  for f in
-    select p.oid::regprocedure as sig
-      from pg_proc p
-      join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname = 'public' and p.prokind = 'f'
-  loop
-    execute format('revoke all on function %s from public, anon', f.sig);
-  end loop;
-end $$;
+revoke all on all functions in schema public from public;
+revoke all on all functions in schema public from anon;
+
+-- And for functions added in future. Supabase's default privileges hand EXECUTE
+-- to anon on anything new in this schema, which is the actual root cause — the
+-- next function written here would have been exposed again the moment it was
+-- created, with nothing failing to say so.
+alter default privileges in schema public revoke execute on functions from public;
+alter default privileges in schema public revoke execute on functions from anon;
 
 -- The permission helpers are named inside the RLS policies, and policy
 -- expressions are evaluated with the CALLER's privileges — without these grants
@@ -1154,6 +1151,50 @@ revoke all on function public.verify_login_code(text)      from public, anon, au
 revoke all on function public.set_login_code(uuid, text)   from public, anon, authenticated;
 grant execute on function public.verify_login_code(text)    to service_role;
 grant execute on function public.set_login_code(uuid, text) to service_role;
+
+-- ============================================================================
+-- 8. The script checks its own most important claim
+--
+-- Everything above is only worth anything if it actually took. A revoke that
+-- silently fails leaves the database exactly as exposed as before while the
+-- script reports success — which is precisely what happened once already, and
+-- was only caught because somebody asked the right question.
+--
+-- This raises, so the SQL editor rolls the whole run back and shows the reason.
+-- A refusal you can read beats a success you cannot trust.
+-- ============================================================================
+do $$
+declare leaked text;
+begin
+  select string_agg(p.oid::regprocedure::text, ', ' order by p.oid::regprocedure::text)
+    into leaked
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.prokind = 'f'
+     and has_function_privilege('anon', p.oid, 'execute');
+
+  if leaked is not null then
+    raise exception
+      'anon can still execute: %. The revokes above did not take — do not deploy.', leaked;
+  end if;
+end $$;
+
+do $$
+declare leaked text;
+begin
+  select string_agg(c.relname, ', ' order by c.relname)
+    into leaked
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public' and c.relkind = 'r'
+     and has_table_privilege('anon', c.oid, 'select');
+
+  if leaked is not null then
+    raise exception 'anon can still read tables: %. Do not deploy.', leaked;
+  end if;
+end $$;
+
 
 -- Realtime: the queue must update on every phone within a second.
 -- Guarded, because adding a table that is already published raises an error and
