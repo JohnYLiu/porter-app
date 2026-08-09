@@ -326,7 +326,11 @@ nav.herobar .hero .badge {
 .compose textarea {
   width: 100%; resize: vertical; min-height: 62px;
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: 11px; padding: 10px 12px; font-size: .95rem;
+  border-radius: 11px; padding: 10px 12px;
+  /* 1rem exactly. Below this iOS zooms the page the moment the box takes
+     focus, which the swipe-to-message gesture does on purpose — so the
+     gesture's whole point came with a zoom every single time. */
+  font-size: 1rem;
 }
 .compose textarea:focus { outline: none; border-color: var(--dim); }
 .compose .btn { margin-top: 8px; }
@@ -512,6 +516,12 @@ nav button .ico { font-variant-emoji: text; }
 /* --- Forms and buttons ---------------------------------------------------- */
 label { display: block; font-size: .78rem; color: var(--dim); margin: 16px 0 7px;
         letter-spacing: .07em; text-transform: uppercase; }
+/* NOTHING FOCUSABLE MAY SET font-size BELOW 1rem.
+   16px is not a style choice on iOS: Safari zooms the page in whenever a
+   focused field's text is smaller than that, and it does not zoom back out
+   afterwards. These inherit 16px from the `font: inherit` reset above; the
+   danger is a rule further down overriding it, which is exactly what happened
+   to the message box and the history filters. */
 input[type=text], select, textarea {
   width: 100%; min-height: var(--tap); padding: 12px 14px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
@@ -584,7 +594,9 @@ textarea { min-height: 84px; resize: vertical; }
 .msg.note { background: #1a2029; color: var(--text); font-size: 1rem; }
 
 .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
-.filters select { min-height: 44px; font-size: .88rem; padding: 8px 11px; }
+/* 1rem, not .88 — see the note on the base rule. Tapping a filter zoomed the
+   page in and left it there. */
+.filters select { min-height: 44px; font-size: 1rem; padding: 8px 11px; }
 
 /* --- Detail sheet --------------------------------------------------------- */
 #sheet {
