@@ -68,13 +68,15 @@
   --navbg:     #0c0d0f;
 
   /* The bottom safe area, capped.
-     No iPhone has a bottom inset larger than the home indicator's 34px, but iOS
-     will report far more than that under some conditions — a keyboard being one
-     — and everything anchored to the bottom of the screen grows when it does.
-     This was previously frozen at the largest value ever seen, which turned one
-     such spike into a permanent 85px of dead space under the tab bar. A ceiling
-     is the same protection without the memory. */
-  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 34px);
+     A phone will report far more than its real inset under some conditions — a
+     keyboard being one — and everything anchored to the bottom of the screen
+     grows when it does. An earlier version froze the largest value ever seen,
+     which turned one such spike into a permanent 85px of dead space under the
+     tab bar; a ceiling is the same protection without the memory.
+     48px, not 34: 34 is the iPhone home indicator, but Android's three-button
+     navigation bar is 48dp and capping at 34 would tuck the tab bar under it.
+     Anything above 48 is not a system inset, it is a keyboard. */
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 48px);
 
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
