@@ -427,6 +427,19 @@ nav button .ico { font-variant-emoji: text; }
    wherever else a note appears, hence .msg.note below. */
 .card .row3 .cardnote.note { color: var(--text); font-size: .88rem; }
 
+/* Bigger again on the unclaimed queue. That is the list a porter reads to
+   decide which car to take, and it is the only one whose row3 carries nothing
+   else — no porter name — so the note has the width to itself.
+   It also wraps here, where everywhere else it truncates. At this size a
+   single line would cut a real note in half, and making the text bigger only
+   to show less of it would defeat the point. Clamped at two lines so cards
+   keep a predictable height down the list. */
+.card.unclaimed .row3 { align-items: flex-start; }
+.card.unclaimed .row3 .cardnote.note {
+  font-size: 1.05rem; line-height: 1.3; white-space: normal;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+
 /* The advisor's colour NEVER travels alone — the name rides with it every
    time. Roughly 1 in 12 men cannot reliably separate some of these hues, and
    a queue keyed only on colour is unusable for them. */
@@ -1374,7 +1387,7 @@ function card(r, opts = {}) {
     : (r.note ? `<span class="cardnote note">${esc(r.note)}</span>` : "");
 
   return `
-    <button class="card" data-id="${r.id}" style="--advisor:${esc(color)}">
+    <button class="card ${r.status}" data-id="${r.id}" style="--advisor:${esc(color)}">
       <div class="row1">
         <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
         <span class="age">${esc(opts.time || ago(r.created_at))}</span>
