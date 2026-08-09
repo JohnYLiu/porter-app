@@ -2979,6 +2979,36 @@ async function act(action, r) {
 /* ===========================================================================
    Boot
 =========================================================================== */
+/* Is a finger or cursor down on something right now?
+ *
+ * This is why a button sometimes needed pressing twice.
+ *
+ * A click is not one event. The browser watches where the press went down and
+ * where it came up, and fires click on the nearest element common to both. The
+ * three-second poll rebuilds the whole view from innerHTML, which does not
+ * update elements — it replaces them. So a poll landing between finger-down
+ * and finger-up detaches the very button being pressed: the new one in its
+ * place was never pressed, the old one is no longer in the document, there is
+ * no common ancestor to speak of, and the click is simply never delivered.
+ * Nothing errors. The tap just does nothing and you press again.
+ *
+ * The odds are roughly the length of a tap over three seconds, which is a few
+ * percent — "every once in a while", exactly as reported.
+ *
+ * Both windows are self-expiring, deliberately. A guard that holds off the
+ * poller and depends on an event arriving to release it is one missed
+ * pointerup away from freezing the queue, and this app has already frozen
+ * itself that way once with the history filters.
+ */
+let pressDownAt = 0, pressReleasedUntil = 0;
+const PRESS_MAX_MS   = 2000;   // a press cannot hold the poller off longer
+const PRESS_GRACE_MS = 400;    // after release, long enough for click to land
+
+function pressInFlight() {
+  const now = Date.now();
+  return (pressDownAt && now - pressDownAt < PRESS_MAX_MS) || now < pressReleasedUntil;
+}
+
 /* Focused in the message box. Deliberately NOT time-bound, unlike fieldInUse:
    rebuilding the sheet destroys the textarea, which drops the keyboard, and
    somebody who swiped over to write a message and then paused to look at the
@@ -3011,6 +3041,11 @@ async function refresh() {
 
   await loadRequests();
   if (!session) return;
+
+  // Somebody is mid-tap. Redrawing now would take the button out from under
+  // them — see pressInFlight(). Nothing is lost by waiting: the data is already
+  // fetched, and the next tick is three seconds away.
+  if (pressInFlight()) return;
   // Decide from state, not from the DOM. Reading `hidden` back off the element
   // is what let the two get out of step in the first place.
   // Rebuilding the sheet under someone composing a message would clear the box
@@ -3088,6 +3123,17 @@ $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
 // Stamped on real interaction, not on focus alone — focus persists long after a
 // dropdown has closed, and that persistence is exactly what froze the History
 // tab. Captured, so it still fires for elements inside a re-rendered view.
+// Captured, so nothing can stop these reaching us, and set before any handler
+// on the way down has a chance to re-render.
+document.addEventListener("pointerdown", () => {
+  pressDownAt = Date.now();
+}, true);
+["pointerup", "pointercancel"].forEach(evt =>
+  document.addEventListener(evt, () => {
+    pressDownAt = 0;
+    pressReleasedUntil = Date.now() + PRESS_GRACE_MS;
+  }, true));
+
 ["input", "keydown", "pointerdown", "change"].forEach(evt =>
   document.addEventListener(evt, (e) => {
     if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) {
