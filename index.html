@@ -360,14 +360,27 @@ nav button .ico { font-variant-emoji: text; }
 .swipe-wrap[data-swipe="complete"] { margin-bottom: 14px; }
 .swipe-action {
   position: absolute; inset: 0; opacity: 0;
-  display: flex; align-items: center; justify-content: flex-end;
-  padding-right: 16px; border-radius: var(--radius);
-  background: #14301f; color: var(--ok);
+  display: flex; align-items: center;
+  border-radius: var(--radius);
   font-size: .8rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+}
+/* Uncovered by dragging LEFT, so it sits on the right. The action that changes
+   the state of the car — claim it, deliver it — and green because of that. */
+.swipe-action.end {
+  justify-content: flex-end; padding-right: 16px;
+  background: #14301f; color: var(--ok);
+}
+/* Uncovered by dragging RIGHT. Blue rather than green: this one does not
+   change anything about the car, it just opens a conversation, and a gesture
+   that commits by accident should not look like one that did something. */
+.swipe-action.start {
+  justify-content: flex-start; padding-left: 16px;
+  background: #16233a; color: var(--loc-510);
 }
 /* Past the commit threshold. Worth being obvious about: releasing here acts,
    releasing before it does nothing. */
-.swipe-action.armed { background: #1d5c37; color: #fff; }
+.swipe-action.end.armed   { background: #1d5c37; color: #fff; }
+.swipe-action.start.armed { background: #23477a; color: #fff; }
 
 /* --- The car you are holding ----------------------------------------------
    Deliberately much larger than a queue card. This is the one thing a porter
@@ -575,7 +588,12 @@ textarea { min-height: 84px; resize: vertical; }
 
 /* --- Detail sheet --------------------------------------------------------- */
 #sheet {
-  position: fixed; inset: 0; z-index: 60;
+  /* bottom, not inset:0. When the keyboard is up the sheet has to sit on top of
+     it — a fixed element stays anchored to the layout viewport, which the
+     keyboard covers, so the message box would open underneath it. --kb is the
+     keyboard's height, measured in trackKeyboard(). */
+  position: fixed; top: 0; left: 0; right: 0; bottom: var(--kb, 0px);
+  z-index: 60;
   background: rgba(0,0,0,.65); backdrop-filter: blur(3px);
   display: flex; align-items: flex-end;
 }
@@ -1499,8 +1517,10 @@ function messageLog(msgs) {
    The wrapper clips, the child slides, and the label underneath is revealed —
    no extra DOM anywhere it isn't used, because only the Queue swipes. */
 function swipeWrap(inner, label, action) {
-  return `<div class="swipe-wrap" data-swipe="${action}">
-            <div class="swipe-action">${esc(label)}</div>${inner}</div>`;
+  return `<div class="swipe-wrap"${action ? ` data-swipe="${action}"` : ""}>
+            ${action ? `<div class="swipe-action end">${esc(label)}</div>` : ""}
+            <div class="swipe-action start">Message</div>
+            ${inner}</div>`;
 }
 
 /* The area sub-tabs above the Queue and In Progress lists.
@@ -1625,8 +1645,9 @@ function bindSwipes() {
   $("view").querySelectorAll(".swipe-wrap").forEach(wrap => {
     const el = wrap.querySelector(".card, .mycar");
     if (!el) return;
-    const action = wrap.dataset.swipe;
-    const label  = wrap.querySelector(".swipe-action");
+    const action = wrap.dataset.swipe || null;         // leftward; may be absent
+    const endLbl   = wrap.querySelector(".swipe-action.end");
+    const startLbl = wrap.querySelector(".swipe-action.start");
 
     const COMMIT_DISTANCE = 96;     // px, for a slow deliberate pull
     const COMMIT_VELOCITY = 0.6;    // px per ms, for a quick flick
@@ -1636,18 +1657,25 @@ function bindSwipes() {
     let x0 = 0, y0 = 0, at = 0, dx = 0;
     let tracking = false, decided = false, swiped = false;
 
+    // Which label is showing follows the direction of travel: drag left and the
+    // action on the right is uncovered, drag right and the one on the left is.
     const paint = () => {
       el.style.transform = `translateX(${dx}px)`;
-      const p = Math.min(1, Math.abs(dx) / COMMIT_DISTANCE);
-      label.style.opacity = p.toFixed(2);
-      label.classList.toggle("armed", Math.abs(dx) >= COMMIT_DISTANCE);
+      const p = Math.min(1, Math.abs(dx) / COMMIT_DISTANCE).toFixed(2);
+      const armed = Math.abs(dx) >= COMMIT_DISTANCE;
+      const showing = dx < 0 ? endLbl : startLbl;
+      const hidden  = dx < 0 ? startLbl : endLbl;
+      if (hidden) { hidden.style.opacity = 0; hidden.classList.remove("armed"); }
+      if (showing) { showing.style.opacity = p; showing.classList.toggle("armed", armed); }
     };
 
     const settle = () => {
       el.style.transition = "transform .18s ease-out";
       el.style.transform = "";
-      label.style.opacity = 0;
-      label.classList.remove("armed");
+      [endLbl, startLbl].forEach(l => {
+        if (!l) return;
+        l.style.opacity = 0; l.classList.remove("armed");
+      });
     };
 
     el.addEventListener("touchstart", (e) => {
@@ -1672,7 +1700,9 @@ function bindSwipes() {
         swipeActive = true;
       }
 
-      if (ddx >= 0) { dx = 0; paint(); return; }   // rightward: nothing to show
+      // Leftward only exists where there is a left-hand action to run. Rightward
+      // always does: every car can be talked about.
+      if (ddx < 0 && !action) { dx = 0; paint(); return; }
       dx = ddx;
       e.preventDefault();      // needs passive:false — stops the page rubber-banding
       paint();
@@ -1690,17 +1720,29 @@ function bindSwipes() {
       // Distance OR speed, but speed still has to go somewhere. Velocity alone
       // let a 20px twitch claim a car, because a short fast movement is a high
       // velocity — and a twitch is exactly what a phone in a pocket produces.
-      const velocity = -dx / Math.max(1, Date.now() - at);
-      if (-dx >= COMMIT_DISTANCE || (-dx >= MIN_FLICK && velocity >= COMMIT_VELOCITY)) {
-        swiped = true;                          // and so the tap that follows is not a tap
-        el.style.transition = "transform .18s ease-out";
-        el.style.transform = "translateX(-100%)";
-        label.style.opacity = 1;
-        label.classList.add("armed");
-        swipeAct(action, el.dataset.id || el.querySelector("[data-car]")?.dataset.car);
-      } else {
+      const travel   = Math.abs(dx);
+      const velocity = travel / Math.max(1, Date.now() - at);
+      const commit   = travel >= COMMIT_DISTANCE
+                    || (travel >= MIN_FLICK && velocity >= COMMIT_VELOCITY);
+      const id = el.dataset.id || el.querySelector("[data-car]")?.dataset.car;
+
+      if (!commit) { settle(); return; }
+      swiped = true;                            // so the tap that follows is not a tap
+
+      if (dx > 0) {
+        // Rightward: go and say something. The card stays where it is — unlike
+        // claiming, this does not take it off the list, and sliding it away
+        // only to put it back would read as a mistake. The sheet covers it
+        // immediately anyway.
         settle();
+        openMessage(id);       // MUST be synchronous — see the function
+        return;
       }
+
+      el.style.transition = "transform .18s ease-out";
+      el.style.transform = "translateX(-100%)";
+      if (endLbl) { endLbl.style.opacity = 1; endLbl.classList.add("armed"); }
+      swipeAct(action, id);
     };
 
     el.addEventListener("touchend", end);
@@ -1716,6 +1758,25 @@ function bindSwipes() {
       e.preventDefault(); e.stopPropagation();
     }, true);
   });
+}
+
+/* Open the sheet with the message box already focused and the keyboard up.
+ *
+ * EVERY LINE OF THIS RUNS SYNCHRONOUSLY, inside the touchend handler, and it
+ * has to. iOS only raises the keyboard for a focus() that happens while the
+ * user's gesture is still being processed — one await anywhere above the
+ * focus() call and the box gets focus with no keyboard, which is precisely the
+ * thing this gesture exists to avoid. openDetail renders from data already in
+ * memory, so there is nothing here that needs to wait.
+ */
+function openMessage(id) {
+  openDetail(id);
+  const box = document.getElementById("msgBox");
+  if (!box) return;
+  box.focus();
+  // The keyboard takes roughly a third of the screen; --kb pushes the sheet
+  // clear of it, and this puts the box itself in the part that is left.
+  box.scrollIntoView({ block: "center" });
 }
 
 async function swipeAct(action, id) {
@@ -1801,11 +1862,13 @@ function render() {
       (splitByArea ? zoneBar(counts) : "") +
       (live.length
         ? `<p class="sub">${live.length} being delivered right now.</p>` +
-          live.map(r => card(r, { time: "claimed " + ago(r.claimed_at) })).join("")
+          live.map(r => swipeWrap(card(r, { time: "claimed " + ago(r.claimed_at) }),
+                                  null, null)).join("")
         : empty("◷", splitByArea
             ? "Nothing in progress in this area"
             : "None of your cars are on the move"));
     bindZoneBar();
+    bindSwipes();
     $("view").querySelectorAll("[data-mine]").forEach(b =>
       b.onclick = () => { activeMineOnly = b.dataset.mine === "1"; render(); });
   }
@@ -2874,6 +2937,15 @@ async function act(action, r) {
 /* ===========================================================================
    Boot
 =========================================================================== */
+/* Focused in the message box. Deliberately NOT time-bound, unlike fieldInUse:
+   rebuilding the sheet destroys the textarea, which drops the keyboard, and
+   somebody who swiped over to write a message and then paused to look at the
+   car should not have it shut in their face. Bounded by the sheet's own
+   lifetime — closing it ends this. */
+function composing() {
+  return document.activeElement?.id === "msgBox";
+}
+
 /* Is somebody actually using a form field right now?
    TIME-BOUND, and that is the whole point — see the note at the call site. */
 function fieldInUse() {
@@ -2904,7 +2976,7 @@ async function refresh() {
   // is also held in msgDraft, so this is the second of two defences, not the
   // only one.
   if (sheetId && !sheetInline) {
-    if (!fieldInUse()) renderDetail();
+    if (!composing() && !fieldInUse()) renderDetail();
     return;
   }
 
@@ -3038,6 +3110,31 @@ serviceWorkerVersion().then(async (v) => {
   } catch { /* no cache api */ }
   $("version").textContent = (v || "not installed") + tapped;
 });
+
+/* How much of the screen the keyboard is covering, as --kb.
+ *
+ * There is no event for "the keyboard opened". What there is is the visual
+ * viewport shrinking, which is the same thing from the page's point of view:
+ * whatever is left between the bottom of the visible area and the bottom of
+ * the layout viewport is being covered by something, and on a phone that
+ * something is the keyboard. The sheet reads this so the message box does not
+ * open underneath it.
+ *
+ * Small values are ignored — iOS moves the visual viewport a few pixels for
+ * its own reasons, and a sheet that twitched every time would be worse than
+ * one that sat still. */
+function trackKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const read = () => {
+    const covered = Math.max(0, innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty("--kb", (covered > 60 ? covered : 0) + "px");
+  };
+  vv.addEventListener("resize", read);
+  vv.addEventListener("scroll", read);
+  read();
+}
+trackKeyboard();
 
 loadSession();
 if (session) start().catch(() => signOut()); else $("login").hidden = false;
