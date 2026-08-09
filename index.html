@@ -7,7 +7,16 @@
 
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- "black", not "black-translucent". Translucent asks iOS to draw the app
+     under the status bar, and iOS then reports a viewport 59px shorter than the
+     screen while still laying out from the top — leaving a strip at the bottom
+     the page cannot reach. Plain black puts the app below the status bar, where
+     the viewport it is given matches the space it actually has. The bar is
+     black either way; this app has no artwork up there to show off.
+     iOS reads this when the app is added to the Home Screen, so an app already
+     installed keeps the old behaviour until it is removed and re-added — which
+     is why the CSS above handles both cases. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Porter">
 <meta name="theme-color" content="#0c0d0f">
 <link rel="manifest" href="manifest.webmanifest">
@@ -137,7 +146,19 @@ button { cursor: pointer; border: none; background: none; }
  * inset:0 makes this box the viewport, exactly, always. main scrolls inside
  * it; the bar is simply the last row of it and cannot go anywhere. There is no
  * document scroll left to be wrong about. */
-#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+#app {
+  position: fixed; top: 0; left: 0; right: 0;
+  /* 100vh, NOT inset:0 or height:100%.
+     On a standalone iOS app with a translucent status bar, the web view is
+     drawn from the very top of the screen but the layout viewport is reported
+     as the screen height MINUS the top inset. On a 430x932 phone that is 873,
+     measured off the device — so inset:0 stopped 59px short of the bottom and
+     left a dead strip there that nothing could reach. 100vh is the full screen
+     in that state, and is simply the viewport height in every other, so it is
+     correct either way. */
+  height: 100vh;
+  display: flex; flex-direction: column;
+}
 
 header {
   flex: none; position: relative; z-index: 20;
@@ -1837,6 +1858,7 @@ function viewportReadout() {
   const n = v => Math.round(v);
   return [
     `win ${n(innerWidth)}x${n(innerHeight)}`,
+    `scr ${n(screen.width)}x${n(screen.height)}`,
     `vv ${vv ? n(vv.height) + "@" + n(vv.offsetTop) : "-"}`,
     `cl ${n(document.documentElement.clientHeight)}`,
     `app ${n(app.top)}..${n(app.bottom)}`,
