@@ -336,7 +336,7 @@ nav.herobar .hero .badge {
    like a stack of separate cards. */
 .mycar .chat { margin: 0 0 14px; }
 .mycar .chatmsg { background: rgba(0,0,0,.28); }
-.btn.talk { margin-bottom: 8px; }
+.btn.detail { margin-bottom: 8px; }
 
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
@@ -1590,8 +1590,7 @@ function myCarPanels(mine) {
         ${messageLog(msgsFor(r.id))}
         <div class="meta2">Requested by ${esc(r.issuer?.name || "—")} ·
           ${esc(ago(r.created_at))}</div>
-        <button class="btn talk" data-talk="${r.id}">${
-          msgsFor(r.id).length ? "Add a message" : "Message about this car"}</button>
+        <button class="btn detail" data-detail="${r.id}">Detailed View</button>
         <button class="btn primary" data-car="${r.id}" data-do="complete">Mark delivered</button>
         <button class="btn" data-car="${r.id}" data-do="unclaim">Release it — I claimed this by mistake</button>
       </div>`, "Delivered", "complete");
@@ -1599,11 +1598,13 @@ function myCarPanels(mine) {
 }
 
 function bindMyCarPanels() {
-  // Composing happens in the detail sheet, not here. This panel is rebuilt by
-  // the three-second poll, and a half-typed message living inside something
-  // that gets rebuilt is the Issue-form bug all over again.
-  $("view").querySelectorAll("[data-talk]").forEach(b =>
-    b.onclick = () => openDetail(b.dataset.talk));
+  // The way in to everything the panel does not show: the full history of the
+  // request, the actions a manager has, and the box for writing a message.
+  // Composing deliberately lives there and not here — this panel is rebuilt by
+  // the three-second poll, and a half-typed message inside something that gets
+  // rebuilt is the Issue-form bug all over again.
+  $("view").querySelectorAll("[data-detail]").forEach(b =>
+    b.onclick = () => openDetail(b.dataset.detail));
 
   $("view").querySelectorAll("[data-car]").forEach(b =>
     b.onclick = async () => {
