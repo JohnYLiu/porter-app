@@ -599,7 +599,13 @@ textarea { min-height: 84px; resize: vertical; }
 }
 #sheet[hidden] { display: none; }
 #sheetBody {
-  width: 100%; max-height: 92vh; overflow-y: auto;
+  /* 92% OF THE SHEET, not 92vh. The sheet shrinks when the keyboard is up, and
+     a cap measured against the whole viewport does not — so the panel stayed
+     full height inside a half-height box, and being bottom-aligned it hung off
+     the TOP of the screen, taking the message box with it. Measured: 704px of
+     panel in a 476px sheet, top edge at -212. As a percentage it tracks the
+     sheet, and looks identical when there is no keyboard. */
+  width: 100%; max-height: 92%; overflow-y: auto;
   background: var(--bg); border-top: 1px solid var(--line);
   border-radius: 20px 20px 0 0;
   padding: 8px 18px calc(24px + var(--safe-bottom));
@@ -1775,9 +1781,11 @@ function openMessage(id) {
   const box = document.getElementById("msgBox");
   if (!box) return;
   box.focus();
-  // The keyboard takes roughly a third of the screen; --kb pushes the sheet
-  // clear of it, and this puts the box itself in the part that is left.
-  box.scrollIntoView({ block: "center" });
+  // No scrollIntoView. It walks every scrollable ancestor including the
+  // document, and with a keyboard open iOS gives the document somewhere to go
+  // — which it then stayed at after the keyboard closed, leaving the whole app
+  // shifted up with its header cut off. Nothing needs scrolling anyway: the
+  // sheet is rebuilt at scrollTop 0 and the box is near the top of it.
 }
 
 async function swipeAct(action, id) {
@@ -2738,6 +2746,9 @@ function resetSheetPosition() {
 }
 
 function closeSheet() {
+  // Belt and braces with the reset in trackKeyboard: whatever the keyboard did
+  // to the document on the way in, the sheet closing puts it back.
+  if (window.scrollY !== 0) window.scrollTo(0, 0);
   $("sheet").hidden = true;
   resetSheetPosition();          // or the next sheet opens already dragged down
   sheetId = null; sheetInline = false;
@@ -3129,7 +3140,17 @@ function trackKeyboard() {
   if (!vv) return;
   const read = () => {
     const covered = Math.max(0, innerHeight - vv.height - vv.offsetTop);
-    document.documentElement.style.setProperty("--kb", (covered > 60 ? covered : 0) + "px");
+    const kb = covered > 60 ? covered : 0;
+    document.documentElement.style.setProperty("--kb", kb + "px");
+
+    // When the keyboard goes away, put the page back where it belongs.
+    //
+    // The app shell is position:fixed, so while signed in the document has
+    // nothing to scroll and window.scrollY should always be 0. A keyboard
+    // breaks that: iOS scrolls the document to reveal the focused field, and
+    // then does not always undo it — which left the whole app shifted up with
+    // its header sliced off, and no way to put it back.
+    if (kb === 0 && window.scrollY !== 0 && session) window.scrollTo(0, 0);
   };
   vv.addEventListener("resize", read);
   vv.addEventListener("scroll", read);
