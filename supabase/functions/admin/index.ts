@@ -5,7 +5,9 @@
 // Two operations, and deliberately only two:
 //
 //   create_user   creating staff means creating a LOGIN, which needs the secret
-//                 key. Nothing reachable with a normal session can do it.
+//                 key. Nothing reachable with a normal session can do it. Also
+//                 attaches that login to a service advisor when asked, since
+//                 doing it in two calls can strand an orphaned account.
 //   reset_code    user_codes has RLS on with zero policies, so nothing but the
 //                 secret key can write there. That is the point of the table.
 //
@@ -148,6 +150,24 @@ Deno.serve(async (req) => {
       await admin.auth.admin.deleteUser(created.user.id);
       console.error("set_login_code failed:", codeErr.message);
       return json({ error: "Could not set the code" }, 500);
+    }
+
+    // Optionally, this account belongs to a service advisor. Linking here rather
+    // than letting the app do it afterwards, because a second call that fails
+    // leaves an orphan: a live login, with manager rights, attached to nobody
+    // and sitting in the staff list. Rolled back like every other step.
+    const advisorId = String(body.advisor_id ?? "");
+    if (advisorId) {
+      const { error: linkErr } = await admin
+        .from("service_advisors")
+        .update({ user_id: created.user.id })
+        .eq("id", advisorId)
+        .is("user_id", null);          // never steal an advisor's existing login
+      if (linkErr) {
+        await admin.auth.admin.deleteUser(created.user.id);
+        console.error("advisor link failed:", linkErr.message);
+        return json({ error: "Could not attach the login to that advisor" }, 500);
+      }
     }
 
     // The only time this code is ever readable. It is hashed in the database and

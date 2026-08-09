@@ -161,7 +161,20 @@ create table if not exists public.service_advisors (
   color      text        not null check (color ~ '^#[0-9a-fA-F]{6}$'),
   active     boolean     not null default true,
   sort_order int         not null default 0,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+
+  -- The advisor's own login, if they have one.
+  --
+  -- A link rather than a merge. requests.advisor_id points at THIS table and
+  -- has to keep pointing at the same row for the whole life of the record —
+  -- who the car belonged to is history, and it must not change because
+  -- somebody's account did. Meanwhile the key character and the palette colour
+  -- are properties of the tag, not of a person who can sign in. So the two stay
+  -- separate tables with one pointer between them.
+  --
+  -- Nullable: an advisor is a name on a key tag first, and may never need to
+  -- sign in at all. Unique, so two advisors cannot share one account.
+  user_id    uuid        references public.users(id) on delete set null
 );
 
 -- ---------------------------------------------------------------------------
@@ -506,6 +519,12 @@ alter table public.requests add column if not exists tag_type text
 
 alter table public.push_subscriptions
   add column if not exists claimed_at timestamptz not null default now();
+
+alter table public.service_advisors
+  add column if not exists user_id uuid references public.users(id) on delete set null;
+
+create unique index if not exists service_advisors_user_idx
+  on public.service_advisors (user_id) where user_id is not null;
 
 
 -- ============================================================================

@@ -2333,7 +2333,13 @@ function adminStaff() {
   // Current staff only. Deactivated people keep their row forever so their name
   // stays on the cars they moved, but they live on their own tab — this is the
   // list John works from daily, and it should hold only people who can log in.
-  const shown = adminUsers.filter(u => u.active);
+  //
+  // Advisors are excluded even though their accounts are ordinary rows in this
+  // same table. They are managed on their own tab, next to their key character
+  // and colour; listing them here as well would mean two rename buttons and two
+  // deactivate buttons for one person.
+  const advisorAccounts = new Set(adminAdvs.map(a => a.user_id).filter(Boolean));
+  const shown = adminUsers.filter(u => u.active && !advisorAccounts.has(u.id));
 
   $("adminBody").innerHTML = `
     <button class="btn primary" id="addUser" style="margin-bottom:16px">Add someone</button>
@@ -2498,6 +2504,11 @@ function adminDeactivated() {
           `and tags starting with ${a.key_char} will match only one of them. ` +
           `Continue?`)) return;
       await adminWrite(`/rest/v1/service_advisors?id=eq.${a.id}`, "PATCH", { active: true });
+      // Retiring switched their login off; bringing them back has to switch it
+      // on again, or they are on the board and cannot sign in.
+      if (a.user_id) {
+        await adminWrite(`/rest/v1/users?id=eq.${a.user_id}`, "PATCH", { active: true });
+      }
     });
 
   $("adminBody").querySelectorAll("[data-remove]").forEach(b =>
@@ -2553,15 +2564,41 @@ function adminAdvisors() {
        Colours are assigned automatically from the palette.</p>
     <button class="btn primary" id="addAdv" style="margin-bottom:16px">Add an advisor</button>
     <div id="newAdv"></div>
+    <div id="codeShown"></div>
     ${adminAdvs.filter(a => a.active).map(a => `
       <div class="arow">
         <div class="top">
           <span class="keychar" style="color:${esc(a.color)}">${esc(a.key_char || "—")}</span>
           <span class="swatch" style="background:${esc(a.color)}"></span>
           <span class="nm">${esc(a.name)}</span>
+          ${a.user_id
+            ? `<button class="abtn" data-advreset="${a.id}">Reset code</button>`
+            : `<button class="abtn" data-advlogin="${a.id}">Create login</button>`}
           <button class="abtn danger" data-adv="${a.id}">Retire</button>
         </div>
+        ${a.user_id ? "" : `<p class="checkhint">No login yet — they cannot sign in.</p>`}
       </div>`).join("")}`;
+
+  // Advisors sign in as managers. They are senior to the desk and the lot, they
+  // need to see everything about their own cars, and there is no narrower role
+  // in this app that fits them.
+  //
+  // advisor_id goes with the request so the Edge Function attaches the login in
+  // the same operation that creates it — doing it in two calls can leave a live
+  // manager account belonging to nobody.
+  $("adminBody").querySelectorAll("[data-advlogin]").forEach(b =>
+    b.onclick = async () => {
+      const a = adminAdvs.find(x => x.id === b.dataset.advlogin);
+      await adminCall({ action: "create_user", name: a.name,
+                        is_manager: true, advisor_id: a.id });
+    });
+
+  $("adminBody").querySelectorAll("[data-advreset]").forEach(b =>
+    b.onclick = async () => {
+      const a = adminAdvs.find(x => x.id === b.dataset.advreset);
+      if (!confirm(`Reset ${a.name}'s code?\n\nTheir current code stops working immediately.`)) return;
+      await adminCall({ action: "reset_code", user_id: a.user_id });
+    });
 
   $("adminBody").querySelectorAll("[data-adv]").forEach(b =>
     b.onclick = async () => {
@@ -2569,7 +2606,13 @@ function adminAdvisors() {
       if (!confirm(
           `Retire ${a.name}?\n\nTags starting with ${a.key_char} will show as Unknown ` +
           `until somebody else takes that character. Past requests keep their name, ` +
-          `and they move to the Inactive tab.`)) return;
+          `and they move to the Inactive tab.` +
+          (a.user_id ? `\n\nTheir login is switched off too.` : ""))) return;
+      // The login goes first. Retire the advisor and then fail here, and
+      // somebody off the board can still sign in with nothing on screen saying so.
+      if (a.user_id) {
+        await adminWrite(`/rest/v1/users?id=eq.${a.user_id}`, "PATCH", { active: false });
+      }
       await adminWrite(`/rest/v1/service_advisors?id=eq.${a.id}`, "PATCH", { active: false });
     });
 
