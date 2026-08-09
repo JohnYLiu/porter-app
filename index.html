@@ -420,6 +420,12 @@ nav button .ico { font-variant-emoji: text; }
 .card .row3 .cardnote {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
+/* A note is the only thing on a card a person wrote deliberately, for the
+   porter about to drive this car — "customer waiting in bay 4". Everything
+   else on that row is metadata about the request. So it gets full white and a
+   size up, while the small print around it stays small print. Same reasoning
+   wherever else a note appears, hence .msg.note below. */
+.card .row3 .cardnote.note { color: var(--text); font-size: .88rem; }
 
 /* The advisor's colour NEVER travels alone — the name rides with it every
    time. Roughly 1 in 12 men cannot reliably separate some of these hues, and
@@ -505,6 +511,9 @@ textarea { min-height: 84px; resize: vertical; }
 .msg.err  { background: #2a1416; color: var(--danger); }
 .msg.info { background: #1a2029; color: var(--dim); }
 .msg.ok   { background: #10231a; color: var(--ok); }
+/* Not .msg.info: that carries the app talking to you, which should stay quiet.
+   This carries a cashier talking to a porter, which should not. */
+.msg.note { background: #1a2029; color: var(--text); font-size: 1rem; }
 
 .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
 .filters select { min-height: 44px; font-size: .88rem; padding: 8px 11px; }
@@ -1362,7 +1371,7 @@ function card(r, opts = {}) {
   // setting off.
   const bottom = opts.meta
     ? `<span class="cardnote">${esc(opts.meta)}</span>`
-    : (r.note ? `<span class="cardnote">${esc(r.note)}</span>` : "");
+    : (r.note ? `<span class="cardnote note">${esc(r.note)}</span>` : "");
 
   return `
     <button class="card" data-id="${r.id}" style="--advisor:${esc(color)}">
@@ -1449,7 +1458,7 @@ function myCarPanels(mine) {
           <div class="code">${esc(r.car_code)}</div>
           <div class="route">${routeHtml(r)}</div>
         </div>
-        ${r.note ? `<div class="msg info" style="margin:0 0 14px">${esc(r.note)}</div>` : ""}
+        ${r.note ? `<div class="msg note" style="margin:0 0 14px">${esc(r.note)}</div>` : ""}
         <div class="meta2">Requested by ${esc(r.issuer?.name || "—")} ·
           ${esc(ago(r.created_at))}</div>
         <button class="btn primary" data-car="${r.id}" data-do="complete">Mark delivered</button>
@@ -2642,7 +2651,7 @@ function renderDetail(message = "") {
     <div style="display:flex;gap:8px;margin-top:12px;align-items:center;--advisor:${esc(color)}">
       <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
     </div>
-    ${r.note ? `<div class="msg info" style="margin-top:14px">${esc(r.note)}</div>` : ""}
+    ${r.note ? `<div class="msg note" style="margin-top:14px">${esc(r.note)}</div>` : ""}
     <dl>
       <div class="kv"><dt>Area</dt><dd>${r.zone === "510" ? "510" : "Lower Lot"}</dd></div>
       <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
