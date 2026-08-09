@@ -78,6 +78,16 @@
      Anything above 48 is not a system inset, it is a keyboard. */
   --safe-bottom: min(env(safe-area-inset-bottom, 0px), 48px);
 
+  /* The tally inside a filter button. Blue, because grey recedes exactly where
+     this number matters — and TWO tints of the one hue, because the button it
+     sits in is dark when unselected and near-white when selected.
+     No single colour can do both: against #16181c and #e8eaed the best any one
+     colour can reach is 3.84:1, which is under the 4.5 needed for text this
+     small. Split in two and it is 8.5:1 and 5.5:1. Same hue, 210deg, so it
+     still reads as one colour changing background rather than two colours. */
+  --count-on-dark:  #7ab8f5;
+  --count-on-light: #095cae;
+
   --radius: 14px;
   --tap: 52px;                       /* every tappable thing clears this */
 }
@@ -551,7 +561,12 @@ textarea { min-height: 84px; resize: vertical; }
   background: var(--surface); border: 1px solid var(--line); color: var(--dim);
   font-weight: 650; letter-spacing: .03em;
 }
-.seg button[aria-pressed="true"] { background: var(--silver); color: #000; border-color: var(--silver); }
+/* The selected state, shared by every pick-one control in the app: the location
+   picker below, the area and mine/everyone filters, the admin sections, the
+   admin date ranges. Near-white on dark rather than a slightly lighter grey —
+   the old treatment differed from unselected by about 4% of luminance, which is
+   not a state you can read at a glance in daylight. */
+.seg button[aria-pressed="true"] { background: var(--silver); color: var(--bg); border-color: var(--silver); }
 
 /* Sub-tabs for the two porter areas. */
 .zonebar { display: flex; gap: 6px; margin: 0 0 14px; }
@@ -560,10 +575,13 @@ textarea { min-height: 84px; resize: vertical; }
   background: var(--surface); border: 1px solid var(--line); color: var(--dimmer);
 }
 .zonebar button[aria-current="true"] {
-  background: var(--surface-2); color: var(--text); border-color: #3a4049;
+  background: var(--silver); color: var(--bg); border-color: var(--silver);
 }
-.zonebar .n { font-size: .78rem; color: var(--dimmer); margin-left: 5px; }
-.zonebar button[aria-current="true"] .n { color: var(--dim); }
+.zonebar .n {
+  font-size: .82rem; font-weight: 700; margin-left: 6px;
+  color: var(--count-on-dark);
+}
+.zonebar button[aria-current="true"] .n { color: var(--count-on-light); }
 
 .checkrow {
   display: flex; align-items: center; gap: 12px; margin-top: 18px;
@@ -737,7 +755,7 @@ dl { margin: 16px 0 22px; }
   background: var(--surface); border: 1px solid var(--line); color: var(--dimmer);
 }
 .ranges button[aria-pressed="true"] {
-  background: var(--surface-2); color: var(--text); border-color: #3a4049;
+  background: var(--silver); color: var(--bg); border-color: var(--silver);
 }
 
 .offline {
