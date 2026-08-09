@@ -1043,9 +1043,13 @@ function loadSession() {
 
 function signOut(reason = "") {
   // Tell the database to stop notifying this device, BEFORE the session goes —
-  // the delete needs the token. Signing out stopped nothing before this: the
-  // subscription row survived, and login_attempts still showed the person as
-  // signed in today, so they kept counting as on shift and kept being buzzed.
+  // the delete needs the token.
+  //
+  // This is now the fast path rather than the only one. It is fire-and-forget
+  // and it can fail: at 3am the access token is an hour stale, so the delete
+  // 401s and the row stays. That used to mean a logged-out phone kept being
+  // notified; it no longer does, because push_targets() asks whether the device
+  // claimed itself today rather than whether anyone deleted it.
   //
   // The browser subscription itself is kept. Signing back in re-claims it
   // silently, so nobody has to tap "turn on notifications" every morning.
@@ -1281,6 +1285,13 @@ async function syncPush() {
 
   if (Array.isArray(mine) && mine.length) {
     pushOn = true;
+    // Say, on the server's clock, that this device is signed in today. That is
+    // the whole basis on which it gets notified — see push_targets() in
+    // db/schema.sql. Runs on every app start, so a device that is never opened
+    // and signed into simply stops being notified after the next 3am, without
+    // anything having to reach it to switch it off.
+    api("/rest/v1/rpc/claim_push", { method: "POST", body: { p_endpoint: sub.endpoint } })
+      .catch(() => {});
     // Subscribed before the keys were stored. Fill them in quietly rather than
     // asking everyone to turn notifications on again — otherwise those devices
     // would keep getting the generic wording forever.

@@ -362,7 +362,13 @@ create table if not exists public.push_subscriptions (
   p256dh     text,
   auth       text,
 
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+
+  -- When a signed-in app on THIS device last confirmed it owns this
+  -- subscription. It is what decides whether the device gets notified — see
+  -- push_targets(). Not created_at: a device subscribes once and then goes on
+  -- being a device for months.
+  claimed_at timestamptz not null default now()
 );
 
 create index if not exists push_subscriptions_user_idx
@@ -496,6 +502,10 @@ alter table public.requests add column if not exists tag_type text
          when left(trim(car_code), 1) = 'T' then 'tow_in'
          else                                    'advisor' end
   ) stored;
+
+
+alter table public.push_subscriptions
+  add column if not exists claimed_at timestamptz not null default now();
 
 
 -- ============================================================================
@@ -1051,12 +1061,21 @@ language sql stable security definer set search_path = '' as $$
     join public.users u on u.id = ps.user_id
    where u.active
      and case when p_zone = '510' then u.notify_510 else u.notify_lower end
-     and exists (
-       select 1 from public.login_attempts la
-        where la.user_id = ps.user_id
-          and la.succeeded
-          and la.at >= public.app_day_start()
-     );
+     -- THIS DEVICE was signed in today, not "this person signed in somewhere
+     -- today". The old test asked login_attempts, which is per-person: a phone
+     -- that had been logged out went on being buzzed as soon as its owner
+     -- signed in anywhere else, because the row still existed and the person
+     -- had a login for the day.
+     --
+     -- It also leaned on sign-out having deleted the row, and that delete is
+     -- fire-and-forget with whatever token the session had. At 3am that token
+     -- is an hour stale, so the delete 401s and the row survives — a device
+     -- could be logged out and still on the list all day.
+     --
+     -- claimed_at inverts it into something positive: a device is notified
+     -- because it said it was signed in, not because nothing managed to say
+     -- otherwise. A failed delete now costs nothing.
+     and ps.claimed_at >= public.app_day_start();
 $$;
 
 -- Who to tell that a car they asked for has arrived: the cashier who issued it,
@@ -1071,12 +1090,21 @@ language sql stable security definer set search_path = '' as $$
    where ps.user_id = p_user
      and u.active
      and u.notify_delivered
-     and exists (
-       select 1 from public.login_attempts la
-        where la.user_id = ps.user_id
-          and la.succeeded
-          and la.at >= public.app_day_start()
-     );
+     -- THIS DEVICE was signed in today, not "this person signed in somewhere
+     -- today". The old test asked login_attempts, which is per-person: a phone
+     -- that had been logged out went on being buzzed as soon as its owner
+     -- signed in anywhere else, because the row still existed and the person
+     -- had a login for the day.
+     --
+     -- It also leaned on sign-out having deleted the row, and that delete is
+     -- fire-and-forget with whatever token the session had. At 3am that token
+     -- is an hour stale, so the delete 401s and the row survives — a device
+     -- could be logged out and still on the list all day.
+     --
+     -- claimed_at inverts it into something positive: a device is notified
+     -- because it said it was signed in, not because nothing managed to say
+     -- otherwise. A failed delete now costs nothing.
+     and ps.claimed_at >= public.app_day_start();
 $$;
 
 -- Drop an endpoint the push service has told us is dead. Called by the notify
@@ -1280,6 +1308,22 @@ begin
 
   return v_row;
 end;
+$$;
+
+
+-- Mark this device as signed in, right now.
+--
+-- An RPC rather than letting the app PATCH the column, so the timestamp comes
+-- from the SERVER's clock. A phone with a wrong clock could otherwise write a
+-- date next year and be notified forever, and phone clocks are exactly the kind
+-- of thing that is wrong.
+create or replace function public.claim_push(p_endpoint text)
+returns void
+language sql security definer set search_path = '' as $$
+  update public.push_subscriptions
+     set claimed_at = now()
+   where endpoint = p_endpoint
+     and user_id = auth.uid();
 $$;
 
 
@@ -1547,6 +1591,8 @@ grant execute on function public.complete_request(uuid)                       to
 grant execute on function public.reopen_request(uuid)                         to authenticated;
 grant execute on function public.cancel_request(uuid)                         to authenticated;
 grant execute on function public.post_message(uuid, text)                     to authenticated;
+revoke all    on function public.claim_push(text)                     from public, anon;
+grant execute on function public.claim_push(text)                       to authenticated;
 
 -- advisor_palette() and next_free_advisor_color() are deliberately granted to
 -- NOBODY. The admin screen works out which key characters are free from the
