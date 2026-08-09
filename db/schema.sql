@@ -985,8 +985,16 @@ begin
   if v_row.status in ('complete', 'cancelled') then
     raise exception 'That request is already finished' using errcode = 'PT409';
   end if;
+  -- Any cashier, not only the one who raised it. Cashiers cover for each other
+  -- at the desk, and the person who spots that a car is no longer needed is
+  -- routinely not the person who asked for it — requiring the original issuer
+  -- meant the request sat in the queue until they came back.
+  --
+  -- Still only while it is UNCLAIMED. Once a porter has taken it they are
+  -- walking to the car, and pulling the job out from under them is a manager's
+  -- call, not any cashier's.
   if not (public.app_is_manager()
-          or (v_row.issued_by = v_uid and v_row.status = 'unclaimed')) then
+          or (public.app_can_issue() and v_row.status = 'unclaimed')) then
     raise exception 'This request can no longer be cancelled by you' using errcode = '42501';
   end if;
 

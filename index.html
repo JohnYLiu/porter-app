@@ -1822,15 +1822,6 @@ async function swipeAct(action, id) {
   const r = requests.find(x => x.id === id);
   if (!r) return;
 
-  // Same question the sheet asks, for the same reason: holding a car and
-  // swiping another is usually a mis-swipe, occasionally deliberate.
-  if (action === "claim") {
-    const held = myClaims();
-    if (held.length && !confirm(
-        `You already have ${held.map(x => x.car_code).join(", ")} claimed.\n\n` +
-        `Claim ${r.car_code} as well?`)) { render(); return; }
-  }
-
   try {
     await api(`/rest/v1/rpc/${action}_request`, { method: "POST", body: { p_id: r.id } });
   } catch (e) {
@@ -2849,7 +2840,9 @@ function renderDetail(message = "") {
 
   if (r.status === "unclaimed") {
     if (canClaim()) actions.push(["claim", "Claim this car", "primary"]);
-    if (isManager() || (canIssue() && r.issued_by === session.user.id)) {
+    // Any cashier, not only the one who raised it. Mirrors cancel_request() in
+    // db/schema.sql, which is the authority — this only decides what to draw.
+    if (isManager() || canIssue()) {
       actions.push(["cancel", "Cancel request", "danger"]);
     }
   } else if (r.status === "claimed") {
@@ -2938,17 +2931,10 @@ async function sendMessage(r) {
 }
 
 async function act(action, r) {
-  // The one confirmation in the app. A porter who already has a car and taps
-  // Claim again is usually mis-tapping, but sometimes genuinely doubling up —
-  // so ask rather than forbid.
-  if (action === "claim") {
-    const held = myClaims();
-    if (held.length && !confirm(
-        `You already have ${held.map(x => x.car_code).join(", ")} claimed.\n\n` +
-        `Claim ${r.car_code} as well?`)) return;
-  }
-  if (action === "cancel" && !confirm(`Cancel the request for ${r.car_code}?`)) return;
-
+  // No confirmations here any more, on either claiming a second car or
+  // cancelling. Carrying two cars at once is normal, and a dialog in front of
+  // every one of them was asking a question whose answer was always yes.
+  // Cancelling still takes opening the car first, so it is not a stray tap.
   const root = sheetInline ? $("view") : $("sheetBody");
   root.querySelectorAll("[data-act]").forEach(b => b.disabled = true);
 
