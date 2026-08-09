@@ -146,19 +146,19 @@ button { cursor: pointer; border: none; background: none; }
  * inset:0 makes this box the viewport, exactly, always. main scrolls inside
  * it; the bar is simply the last row of it and cannot go anywhere. There is no
  * document scroll left to be wrong about. */
-#app {
-  position: fixed; top: 0; left: 0; right: 0;
-  /* 100vh, NOT inset:0 or height:100%.
-     On a standalone iOS app with a translucent status bar, the web view is
-     drawn from the very top of the screen but the layout viewport is reported
-     as the screen height MINUS the top inset. On a 430x932 phone that is 873,
-     measured off the device — so inset:0 stopped 59px short of the bottom and
-     left a dead strip there that nothing could reach. 100vh is the full screen
-     in that state, and is simply the viewport height in every other, so it is
-     correct either way. */
-  height: 100vh;
-  display: flex; flex-direction: column;
-}
+/* inset:0 — the layout viewport, and no further.
+ *
+ * 100vh was tried here and is wrong. On a standalone iOS app with a
+ * translucent status bar, 100vh does report the full screen (932 on a 430x932
+ * phone) while the layout viewport reports 873 — but the web view does not
+ * PAINT below 873. Sizing the shell to 932 did not reclaim the strip, it just
+ * pushed the bottom of the tab bar off the screen and sliced the labels in
+ * half. The strip is unreachable, not merely unclaimed.
+ *
+ * The only real fix for it is the status bar meta in the head, which iOS reads
+ * when an app is added to the Home Screen — so an app installed before that
+ * change keeps the short viewport until it is removed and re-added. */
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
 
 header {
   flex: none; position: relative; z-index: 20;
