@@ -942,10 +942,22 @@ function routeHtml(r) {
     .join('<span class="arrow">→</span>');
 }
 
+/* Does this account belong to a service advisor?
+   Checks both lists because the two screens have different ones loaded: the app
+   knows the active advisors, the admin dashboard knows all of them. */
+function isAdvisorAccount(u) {
+  if (!u?.id) return false;
+  return advisors.some(a => a.user_id === u.id)
+      || adminAdvs.some(a => a.user_id === u.id);
+}
+
 function roleLabel(u) {
   const parts = [];
   if (u.is_admin) parts.push("Admin");
-  if (u.is_manager) parts.push("Manager");
+  // Advisors are given manager permissions, but "Manager" is not what they are
+  // — it is only how the app spells the access they need. Say the job.
+  if (isAdvisorAccount(u)) parts.push("Service Advisor");
+  else if (u.is_manager) parts.push("Manager");
   if (!u.is_manager && u.can_issue) parts.push("Cashier");
 
   // Where they normally work. A label, not a permission — anyone can claim in
@@ -1113,7 +1125,9 @@ const SELECT =
   "claimer:users!requests_claimed_by_fkey(name)";
 
 async function loadAdvisors() {
-  advisors = await api("/rest/v1/service_advisors?select=id,name,color,key_char" +
+  // user_id comes along so the app can tell that the person signed in IS one of
+  // these advisors, which is what puts "Service Advisor" under their name.
+  advisors = await api("/rest/v1/service_advisors?select=id,name,color,key_char,user_id" +
                        "&active=is.true&order=sort_order.asc,name.asc");
 }
 
@@ -2445,7 +2459,11 @@ function startRename(u) {
 
 /* --- Deactivated --------------------------------------------------------- */
 function adminDeactivated() {
-  const gone     = adminUsers.filter(u => !u.active);
+  // Advisor accounts are left out here for the same reason as on the Staff tab:
+  // a retired advisor is listed just below as a retired ADVISOR, and showing
+  // their account as well would be the same person twice.
+  const advisorAccounts = new Set(adminAdvs.map(a => a.user_id).filter(Boolean));
+  const gone     = adminUsers.filter(u => !u.active && !advisorAccounts.has(u.id));
   const retired  = adminAdvs.filter(a => !a.active);
 
   // Advisors are never removed, only retired — a name on last month's requests
