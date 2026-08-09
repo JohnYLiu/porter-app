@@ -296,6 +296,48 @@ nav.herobar .hero .badge {
   font-size: .66rem; line-height: 1.7; word-break: break-word;
 }
 
+/* --- Talking about a car ---------------------------------------------------
+   Shown only where there is something to show: a car nobody has said anything
+   about looks exactly as it did before. */
+.msgcount {
+  font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+  color: var(--silver); background: var(--surface-2);
+  border-radius: 999px; padding: 2px 9px; white-space: nowrap;
+}
+
+.chat { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.chatmsg {
+  background: var(--surface-2); border-radius: 11px; padding: 9px 12px;
+  /* No max-height and no inner scroll. The brief was that the request can grow
+     taller to fit the conversation, and a scrollbar inside a card inside a
+     scrolling page is a worse way to read six messages than simply being
+     longer. */
+}
+.chathead {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: .72rem; margin-bottom: 3px;
+}
+.chathead .who  { font-weight: 700; color: var(--dim); }
+.chathead .when { margin-left: auto; color: var(--dimmer); white-space: nowrap; }
+.chatbody { font-size: .95rem; color: var(--text); white-space: pre-wrap;
+            overflow-wrap: anywhere; }
+
+.compose { margin-top: 14px; }
+.compose textarea {
+  width: 100%; resize: vertical; min-height: 62px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 11px; padding: 10px 12px; font-size: .95rem;
+}
+.compose textarea:focus { outline: none; border-color: var(--dim); }
+.compose .btn { margin-top: 8px; }
+
+/* On the panel for a car you are holding, the log is the reason the panel is
+   allowed to get taller. Keep it visually inside the panel rather than looking
+   like a stack of separate cards. */
+.mycar .chat { margin: 0 0 14px; }
+.mycar .chatmsg { background: rgba(0,0,0,.28); }
+.btn.talk { margin-bottom: 8px; }
+
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
 
@@ -726,6 +768,7 @@ const STORE = "porter.session.v1";
 let session = null;      // { access_token, refresh_token, expires_at, user, loginAt }
 let advisors = [];
 let requests = [];
+let messages = [];       // every message on a car in the live window
 let tab = "queue";
 let zone = "510";        // which area sub-tab is showing in Queue / In Progress
 let activeMineOnly = true;   // Active tab: only cars this cashier requested
@@ -1037,7 +1080,39 @@ async function loadRequests() {
     if (e.status === 401) { signOut(); return; }
     lastFetchOk = false;         // keep showing the last good queue
   }
+  await loadMessages(since);
   $("offline").hidden = lastFetchOk;
+}
+
+/* Messages, in their own request rather than embedded in the one above.
+ *
+ * Two reasons. Embedding would put a join on the admin screen's all-time
+ * history query too, which pulls five thousand rows and needs none of this.
+ * And it would make the queue itself fail if this table were missing — a
+ * PostgREST select naming an unknown relation is a 400 for the whole query, so
+ * shipping the app before the migration would take the board down rather than
+ * just leave the messages out.
+ *
+ * Bounded the same way the queue is: everything said in the last seven days.
+ * A message cannot pre-date its request, and requests older than that are not
+ * on screen, so nothing visible loses its log.
+ */
+async function loadMessages(since) {
+  try {
+    messages = await api("/rest/v1/request_messages" +
+      "?select=id,request_id,body,created_at,author:users!request_messages_author_id_fkey(name)" +
+      `&created_at=gte.${since}&order=created_at.desc&limit=2000`);
+  } catch {
+    // Deliberately silent, and deliberately does NOT clear what we already
+    // have. The queue is the thing that must not break; a stale or absent
+    // message list is a much smaller loss than a blank board.
+  }
+}
+
+// Newest first, which is the order they are read in.
+function msgsFor(id) {
+  return messages.filter(m => m.request_id === id)
+                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
 
 /* Re-read the signed-in person's own row on every poll.
@@ -1373,6 +1448,10 @@ function heroTabs(list, waiting, heroId) {
 function card(r, opts = {}) {
   const adv = advisorOf(r);
   const color = adv.color;
+  // A count, not the messages. The queue is a list you scan; carrying the
+  // conversation here would bury the car code it exists to show. Tapping in
+  // gets the whole thing.
+  const n = msgsFor(r.id).length;
   const porter = r.claimer?.name ? `<span class="porter">${esc(r.claimer.name)}</span>` : "";
   // Status wins over the note wherever there is one. In History that line is
   // what you are scanning — "Delivered by Mark · 42 min" — and letting a note
@@ -1390,6 +1469,7 @@ function card(r, opts = {}) {
     <button class="card ${r.status}" data-id="${r.id}" style="--advisor:${esc(color)}">
       <div class="row1">
         <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
+        ${n ? `<span class="msgcount">${n} message${n > 1 ? "s" : ""}</span>` : ""}
         <span class="age">${esc(opts.time || ago(r.created_at))}</span>
       </div>
       <div class="mid">
@@ -1398,6 +1478,21 @@ function card(r, opts = {}) {
       </div>
       <div class="row3">${bottom}${porter}</div>
     </button>`;
+}
+
+/* The conversation about one car, newest first.
+   Newest first because the last thing said is the thing that changes what you
+   do next; a porter reading this has usually already seen the rest. */
+function messageLog(msgs) {
+  if (!msgs.length) return "";
+  return `<div class="chat">` + msgs.map(m => `
+    <div class="chatmsg">
+      <div class="chathead">
+        <span class="who">${esc(m.author?.name || "Someone")}</span>
+        <span class="when">${esc(dayAndClock(m.created_at))}</span>
+      </div>
+      <div class="chatbody">${esc(m.body)}</div>
+    </div>`).join("") + `</div>`;
 }
 
 /* Wraps something swipeable so there is an action sitting behind it.
@@ -1472,8 +1567,11 @@ function myCarPanels(mine) {
           <div class="route">${routeHtml(r)}</div>
         </div>
         ${r.note ? `<div class="msg note" style="margin:0 0 14px">${esc(r.note)}</div>` : ""}
+        ${messageLog(msgsFor(r.id))}
         <div class="meta2">Requested by ${esc(r.issuer?.name || "—")} ·
           ${esc(ago(r.created_at))}</div>
+        <button class="btn talk" data-talk="${r.id}">${
+          msgsFor(r.id).length ? "Add a message" : "Message about this car"}</button>
         <button class="btn primary" data-car="${r.id}" data-do="complete">Mark delivered</button>
         <button class="btn" data-car="${r.id}" data-do="unclaim">Release it — I claimed this by mistake</button>
       </div>`, "Delivered", "complete");
@@ -1481,6 +1579,12 @@ function myCarPanels(mine) {
 }
 
 function bindMyCarPanels() {
+  // Composing happens in the detail sheet, not here. This panel is rebuilt by
+  // the three-second poll, and a half-typed message living inside something
+  // that gets rebuilt is the Issue-form bug all over again.
+  $("view").querySelectorAll("[data-talk]").forEach(b =>
+    b.onclick = () => openDetail(b.dataset.talk));
+
   $("view").querySelectorAll("[data-car]").forEach(b =>
     b.onclick = async () => {
       const r = requests.find(x => x.id === b.dataset.car);
@@ -2547,6 +2651,7 @@ async function adminCall(payload) {
    Detail sheet
 =========================================================================== */
 let sheetId = null;
+let msgDraft = "";       // what is half-typed into the open sheet
 let sheetInline = false;
 
 /* A request's detail is shown one of two ways: as a modal sheet over a list,
@@ -2555,6 +2660,7 @@ let sheetInline = false;
    visibility drift apart, and a stale modal sat on top showing "Mark
    delivered" for a car that had already been delivered. */
 function openDetail(id, inline = false) {
+  if (id !== sheetId) msgDraft = "";
   sheetId = id; sheetInline = inline;
   $("sheet").hidden = inline;      // inline mode always dismisses the modal
   renderDetail();
@@ -2652,6 +2758,7 @@ function renderDetail(message = "") {
 
   const adv = advisorOf(r);
   const color = adv.color;
+  const msgs = msgsFor(r.id);
   const html = `
     ${sheetInline ? "" : `<div class="grip"></div>`}
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
@@ -2665,6 +2772,13 @@ function renderDetail(message = "") {
       <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
     </div>
     ${r.note ? `<div class="msg note" style="margin-top:14px">${esc(r.note)}</div>` : ""}
+    <div class="compose">
+      <textarea id="msgBox" rows="2" maxlength="1000"
+                placeholder="Message the others about this car"></textarea>
+      <button class="btn primary" id="msgSend">Send</button>
+      <div id="msgErr"></div>
+    </div>
+    ${messageLog(msgs)}
     <dl>
       <div class="kv"><dt>Area</dt><dd>${r.zone === "510" ? "510" : "Lower Lot"}</dd></div>
       <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
@@ -2684,6 +2798,38 @@ function renderDetail(message = "") {
   const root = sheetInline ? $("view") : $("sheetBody");
   root.querySelectorAll("[data-act]").forEach(b =>
     b.onclick = () => b.dataset.act === "close" ? closeSheet() : act(b.dataset.act, r));
+
+  const box = root.querySelector("#msgBox");
+  if (box) {
+    // Survives the rebuild. The poll is held off while someone is typing, but
+    // the sheet is also rebuilt after every action taken in it, and losing a
+    // half-written message to tapping the wrong thing would be its own bug.
+    box.value = msgDraft;
+    box.oninput = () => { msgDraft = box.value; };
+    root.querySelector("#msgSend").onclick = () => sendMessage(r);
+  }
+}
+
+async function sendMessage(r) {
+  const root = sheetInline ? $("view") : $("sheetBody");
+  const box  = root.querySelector("#msgBox");
+  const send = root.querySelector("#msgSend");
+  const body = box.value.trim();
+  if (!body) { box.focus(); return; }
+
+  send.disabled = true; send.textContent = "Sending…";
+  try {
+    await api("/rest/v1/rpc/post_message", { method: "POST",
+      body: { p_id: r.id, p_body: body } });
+    msgDraft = "";                       // only once it is actually saved
+    await loadRequests();
+    renderDetail();
+    renderTabs();
+  } catch (e) {
+    send.disabled = false; send.textContent = "Send";
+    root.querySelector("#msgErr").innerHTML =
+      `<div class="msg err">${esc(e.message)}</div>`;
+  }
 }
 
 async function act(action, r) {
@@ -2728,6 +2874,14 @@ async function act(action, r) {
 /* ===========================================================================
    Boot
 =========================================================================== */
+/* Is somebody actually using a form field right now?
+   TIME-BOUND, and that is the whole point — see the note at the call site. */
+function fieldInUse() {
+  const busy = document.activeElement;
+  return !!busy && /^(INPUT|SELECT|TEXTAREA)$/.test(busy.tagName)
+         && Date.now() - lastFieldTouch < FIELD_GRACE_MS;
+}
+
 async function refresh() {
   if (session && session.loginAt < dayStart()) {
     signOut("Your session ended for the day. Sign in again.");
@@ -2745,7 +2899,14 @@ async function refresh() {
   if (!session) return;
   // Decide from state, not from the DOM. Reading `hidden` back off the element
   // is what let the two get out of step in the first place.
-  if (sheetId && !sheetInline) { renderDetail(); return; }
+  // Rebuilding the sheet under someone composing a message would clear the box
+  // mid-sentence — the same trap that made the Issue form unusable. The draft
+  // is also held in msgDraft, so this is the second of two defences, not the
+  // only one.
+  if (sheetId && !sheetInline) {
+    if (!fieldInUse()) renderDetail();
+    return;
+  }
 
   // Never rebuild the view out from under someone who is typing. The Issue tab
   // is a form with no live content to refresh, and re-rendering it every few
@@ -2767,10 +2928,7 @@ async function refresh() {
   // option, so one use of a filter meant every later poll skipped the render
   // and the list never changed again. A guard with no expiry is not a guard,
   // it is a latch.
-  const busy = document.activeElement;
-  const inUse = busy && /^(INPUT|SELECT|TEXTAREA)$/.test(busy.tagName)
-                && Date.now() - lastFieldTouch < FIELD_GRACE_MS;
-  if (inUse) { renderTabs(); return; }
+  if (fieldInUse()) { renderTabs(); return; }
 
   // Mid-swipe. Re-rendering would replace the element the finger is holding,
   // which drops the gesture and leaves the card stuck halfway across.

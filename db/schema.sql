@@ -283,6 +283,33 @@ create table if not exists public.request_events (
   detail     jsonb
 );
 
+
+-- Talk about one car.
+--
+-- Separate from request_events on purpose. Events are what the SYSTEM records
+-- and nobody writes by hand; this is what PEOPLE say, and the two have
+-- different lifetimes, different audiences and different trust. Mixing them
+-- would mean a free-text field on the audit trail.
+--
+-- No edit and no delete. A dispatch log that can be quietly rewritten after the
+-- fact is worth less than one that cannot, and "I said that, sorry" is a
+-- cheaper fix than an argument about what a message used to say.
+create table if not exists public.request_messages (
+  id         bigint generated always as identity primary key,
+  request_id uuid        not null references public.requests(id) on delete cascade,
+  author_id  uuid        not null references public.users(id),
+  body       text        not null check (length(trim(body)) between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+
+-- Every read is "the messages on this car, newest first".
+create index if not exists request_messages_request_idx
+  on public.request_messages (request_id, created_at desc);
+
+-- And the app's own load is "everything said recently", across all cars.
+create index if not exists request_messages_recent_idx
+  on public.request_messages (created_at desc);
+
 create index if not exists request_events_request_idx on public.request_events (request_id, at);
 
 -- ---------------------------------------------------------------------------
@@ -539,6 +566,7 @@ alter table public.user_codes       enable row level security;
 alter table public.service_advisors enable row level security;
 alter table public.requests         enable row level security;
 alter table public.request_events   enable row level security;
+alter table public.request_messages enable row level security;
 alter table public.login_attempts   enable row level security;
 alter table public.push_subscriptions enable row level security;
 alter table public.app_secrets        enable row level security;
@@ -556,6 +584,7 @@ drop policy if exists advisors_select     on public.service_advisors;
 drop policy if exists advisors_admin_all  on public.service_advisors;
 drop policy if exists requests_select     on public.requests;
 drop policy if exists events_select       on public.request_events;
+drop policy if exists messages_select     on public.request_messages;
 drop policy if exists push_own             on public.push_subscriptions;
 
 -- --- users -----------------------------------------------------------------
@@ -601,6 +630,18 @@ create policy events_select on public.request_events
   using (public.app_is_active());
 
 -- No write policy. Only the operations in section 6 append here.
+
+-- --- request_messages ------------------------------------------------------
+-- Same reasoning as requests: the queue is shared, so the conversation about a
+-- car is shared. A porter needs to read what the cashier said about a car he is
+-- about to take, and he is not the person the cashier was replying to.
+create policy messages_select on public.request_messages
+  for select to authenticated
+  using (public.app_is_active());
+
+-- No insert policy. Posting goes through post_message() so that authorship is
+-- taken from the session rather than accepted from the client — otherwise
+-- anyone could sign a message with somebody else's name.
 
 -- --- login_attempts --------------------------------------------------------
 -- No policies, on purpose.
@@ -1195,6 +1236,45 @@ end;
 $$;
 
 
+-- Say something about a car.
+--
+-- Authorship comes from the session, never from the caller. That is the whole
+-- reason this is a function rather than an insert policy: a client that can
+-- name the author can sign a message as anybody.
+--
+-- Deliberately allowed on a request in ANY state, including finished ones.
+-- "Left it in bay 3, keys with Josh" is said after the car is delivered more
+-- often than before, and a log that closes the moment the job does would miss
+-- exactly the messages worth keeping.
+create or replace function public.post_message(p_id uuid, p_body text)
+returns public.request_messages
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_uid  uuid := public.app_require_user();
+  v_body text := trim(coalesce(p_body, ''));
+  v_row  public.request_messages;
+begin
+  if v_body = '' then
+    raise exception 'Write something first' using errcode = '22023';
+  end if;
+  if length(v_body) > 1000 then
+    raise exception 'That message is too long' using errcode = '22023';
+  end if;
+
+  -- Checked here so a bad id is a sentence rather than a foreign key violation.
+  if not exists (select 1 from public.requests where id = p_id) then
+    raise exception 'No such request' using errcode = '22023';
+  end if;
+
+  insert into public.request_messages (request_id, author_id, body)
+  values (p_id, v_uid, v_body)
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+
 -- ============================================================================
 -- 6b. Advisor colours
 --
@@ -1430,8 +1510,14 @@ revoke all on public.login_attempts    from authenticated;
 revoke all on public.app_secrets       from authenticated;
 
 -- Writes to these go through section 6 only.
-revoke insert, update, delete on public.requests       from authenticated;
-revoke insert, update, delete on public.request_events from authenticated;
+revoke insert, update, delete on public.requests         from authenticated;
+revoke insert, update, delete on public.request_events   from authenticated;
+
+-- Readable by anyone signed in, writable by nobody directly. Posting is
+-- post_message() below, which is what stops a client choosing the author. No
+-- update or delete for anyone: the log does not get rewritten.
+grant  select                 on public.request_messages to authenticated;
+revoke insert, update, delete on public.request_messages from authenticated;
 revoke insert, delete         on public.users          from authenticated;
 
 -- Operations: logged-in users may call them; the functions themselves decide
@@ -1443,6 +1529,7 @@ revoke all on function public.unclaim_request(uuid)                           fr
 revoke all on function public.complete_request(uuid)                          from public, anon;
 revoke all on function public.reopen_request(uuid)                            from public, anon;
 revoke all on function public.cancel_request(uuid)                            from public, anon;
+revoke all on function public.post_message(uuid, text)                        from public, anon;
 
 grant execute on function public.create_request(text, text, text, text, boolean)       to authenticated;
 grant execute on function public.edit_request(uuid, text, text, text, text, boolean)   to authenticated;
@@ -1451,6 +1538,7 @@ grant execute on function public.unclaim_request(uuid)                        to
 grant execute on function public.complete_request(uuid)                       to authenticated;
 grant execute on function public.reopen_request(uuid)                         to authenticated;
 grant execute on function public.cancel_request(uuid)                         to authenticated;
+grant execute on function public.post_message(uuid, text)                     to authenticated;
 
 -- advisor_palette() and next_free_advisor_color() are deliberately granted to
 -- NOBODY. The admin screen works out which key characters are free from the
