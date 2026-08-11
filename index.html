@@ -350,7 +350,6 @@ nav.herobar .hero .badge {
    like a stack of separate cards. */
 .mycar .chat { margin: 0 0 14px; }
 .mycar .chatmsg { background: rgba(0,0,0,.28); }
-.btn.detail { margin-bottom: 8px; }
 
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
@@ -401,6 +400,7 @@ nav button .ico { font-variant-emoji: text; }
    mid-delivery needs on screen, so it takes the top of the Queue rather than
    hiding behind a tab they have to remember to open. */
 .mycar {
+  cursor: pointer;                 /* the whole panel opens the detail view */
   border: 1px solid var(--line);
   border-left: 5px solid var(--advisor, var(--line));
   border-radius: var(--radius);
@@ -1642,7 +1642,7 @@ function myCarPanels(mine) {
   return `<h2 class="title">${esc(heading)}</h2>` + mine.map(r => {
     const adv = advisorOf(r);
     return swipeWrap(`
-      <div class="mycar" style="--advisor:${esc(adv.color)}">
+      <div class="mycar" data-detail="${r.id}" style="--advisor:${esc(adv.color)}">
         <div class="top1">
           <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
           <span class="age">claimed ${esc(ago(r.claimed_at))}</span>
@@ -1655,20 +1655,24 @@ function myCarPanels(mine) {
         ${messageLog(msgsFor(r.id))}
         <div class="meta2">Requested by ${esc(r.issuer?.name || "—")} ·
           ${esc(ago(r.created_at))}</div>
-        <button class="btn detail" data-detail="${r.id}">Detailed View</button>
         <button class="btn go" data-car="${r.id}" data-do="complete">Mark delivered</button>
       </div>`, "Delivered", "complete");
   }).join("");
 }
 
 function bindMyCarPanels() {
-  // The way in to everything the panel does not show: the full history of the
-  // request, the actions a manager has, and the box for writing a message.
-  // Composing deliberately lives there and not here — this panel is rebuilt by
-  // the three-second poll, and a half-typed message inside something that gets
-  // rebuilt is the Issue-form bug all over again.
-  $("view").querySelectorAll("[data-detail]").forEach(b =>
-    b.onclick = () => openDetail(b.dataset.detail));
+  // The whole panel is the way in to everything it does not show: the full
+  // history of the request, the actions a manager has, and the box for writing
+  // a message. Composing deliberately lives there and not here — this panel is
+  // rebuilt by the three-second poll, and a half-typed message inside something
+  // that gets rebuilt is the Issue-form bug all over again.
+  $("view").querySelectorAll(".mycar[data-detail]").forEach(panel =>
+    panel.onclick = (e) => {
+      // Anything that already does something keeps doing it. Only the space
+      // around the controls opens the detail view.
+      if (e.target.closest("button")) return;
+      openDetail(panel.dataset.detail);
+    });
 
   $("view").querySelectorAll("[data-car]").forEach(b =>
     b.onclick = async () => {
@@ -1815,12 +1819,19 @@ function bindSwipes() {
 
     // A finished swipe still ends in a touchend over the card, which the browser
     // turns into a click — opening the detail sheet for the car just claimed.
-    // Capture phase, so it never reaches the card's own handler or a button
-    // inside the panel.
+    //
+    // stopImmediatePropagation, not stopPropagation: the handlers that must not
+    // run are on THIS element, not on an ancestor, and stopPropagation does
+    // nothing about those. The panel's own click handler is one of them, and
+    // after a swipe to message it would rebuild the sheet and drop the keyboard
+    // that the swipe just raised.
+    //
+    // Which is also why bindSwipes runs before the handlers it has to beat:
+    // same-element listeners fire in the order they were added.
     el.addEventListener("click", (e) => {
       if (!swiped) return;
       swiped = false;
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault(); e.stopImmediatePropagation();
     }, true);
   });
 }
@@ -1891,8 +1902,8 @@ function render() {
         : empty("✓", "Nothing waiting", "Every car in this area has been picked up."));
 
     bindZoneBar();
-    bindMyCarPanels();
-    bindSwipes();
+    bindSwipes();          // first: its click suppressor has to run before the
+    bindMyCarPanels();     // panel handler it is there to cancel
     if ($("enablePush")) $("enablePush").onclick = enablePush;
   }
 
