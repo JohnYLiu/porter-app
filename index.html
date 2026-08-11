@@ -600,6 +600,10 @@ textarea { min-height: 84px; resize: vertical; }
   background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
 }
 .btn.primary { background: var(--silver); color: #000; border-color: var(--silver); }
+/* Delivering a car is the one action on these screens that finishes something,
+   and it sits next to Send, which is also a filled button. Same weight, own
+   colour, so the two cannot be hit for each other in a hurry. */
+.btn.go      { background: var(--ok); color: var(--bg); border-color: var(--ok); }
 .btn.danger  { color: var(--danger); }
 .btn:disabled { opacity: .45; }
 
@@ -1652,8 +1656,7 @@ function myCarPanels(mine) {
         <div class="meta2">Requested by ${esc(r.issuer?.name || "—")} ·
           ${esc(ago(r.created_at))}</div>
         <button class="btn detail" data-detail="${r.id}">Detailed View</button>
-        <button class="btn primary" data-car="${r.id}" data-do="complete">Mark delivered</button>
-        <button class="btn" data-car="${r.id}" data-do="unclaim">Release it — I claimed this by mistake</button>
+        <button class="btn go" data-car="${r.id}" data-do="complete">Mark delivered</button>
       </div>`, "Delivered", "complete");
   }).join("");
 }
@@ -2918,9 +2921,11 @@ function renderDetail(message = "") {
       actions.push(["cancel", "Cancel request", "danger"]);
     }
   } else if (r.status === "claimed") {
-    if (mine || isManager()) actions.push(["complete", "Mark delivered", "primary"]);
-    if (mine)        actions.push(["unclaim", "Release it — I claimed this by mistake", ""]);
-    else if (isManager()) actions.push(["unclaim", "Release it (manager)", ""]);
+    if (mine || isManager()) actions.push(["complete", "Mark delivered", "go"]);
+    // Red, like Cancel: releasing a car puts it back on the queue and undoes
+    // somebody's claim, which is the same shape of act as cancelling.
+    if (mine)        actions.push(["unclaim", "Release it — I claimed this by mistake", "danger"]);
+    else if (isManager()) actions.push(["unclaim", "Release it (manager)", "danger"]);
     if (isManager()) actions.push(["cancel", "Cancel request", "danger"]);
   } else if (r.status === "complete") {
     if (isManager() || (mine && sameDay)) actions.push(["reopen", "Reopen — I tapped this by mistake", ""]);
