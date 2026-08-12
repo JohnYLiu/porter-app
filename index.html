@@ -1929,7 +1929,23 @@ function empty(icon, title, sub = "") {
           ${sub ? `<div style="font-size:.85rem;margin-top:6px">${esc(sub)}</div>` : ""}</div>`;
 }
 
+/* The name and role in the header.
+ *
+ * Drawn on every render, not once at sign-in. Whether somebody is a service
+ * advisor is not a column on their account — it is whether an advisor row
+ * points at them — so it cannot be known until the advisor list has loaded,
+ * and at sign-in it has not. Written once up there it read "Manager" and then
+ * stayed wrong for the rest of the session.
+ */
+function renderWho() {
+  if (!session?.user) return;
+  $("whoName").textContent = session.user.name;
+  $("whoRole").textContent = roleLabel(session.user);
+  $("adminBtn").hidden = !session.user.is_admin;
+}
+
 function render() {
+  renderWho();
   renderTabs();
   const v = $("view");
 
@@ -3290,9 +3306,7 @@ async function refresh() {
 async function start() {
   $("login").hidden = true;
   $("app").hidden = false;
-  $("whoName").textContent = session.user.name;
-  $("whoRole").textContent = roleLabel(session.user);
-  $("adminBtn").hidden = !session.user.is_admin;
+  renderWho();          // the name, straight away; the role is corrected below
 
   // Pull the full row before the first render: the login function returns a
   // trimmed profile, and Settings needs the notification preferences on it.
