@@ -1692,6 +1692,44 @@ language sql security definer set search_path = '' as $$
 $$;
 
 
+-- A clock of its own, so promotion does not depend on somebody watching.
+--
+-- The client-side call is kept, and it is still what makes a booking land
+-- within seconds while anyone has the app open. But it cannot be the only one:
+-- the reminder for a booking you claimed exists precisely for the moment you
+-- are NOT looking at the app, and a promotion that waits for a poll waits for
+-- exactly the person who is not there. In practice the first person to open
+-- the app afterwards triggered everybody's overdue notifications at once.
+--
+-- pg_cron runs every minute, so the worst case is a minute late instead of
+-- indefinitely late.
+--
+-- Wrapped, because this is the one thing in this file that depends on a
+-- database feature rather than on SQL: if pg_cron is not enabled on the
+-- project, the script must carry on and say so rather than failing at the last
+-- fence and rolling back everything above it.
+do $$
+begin
+  execute 'create extension if not exists pg_cron';
+
+  -- Replacing rather than adding. Without this, every re-run of this file left
+  -- another copy of the job behind.
+  begin
+    perform cron.unschedule('porter-promote');
+  exception when others then
+    null;   -- not scheduled yet, which is the normal first run
+  end;
+
+  perform cron.schedule('porter-promote', '* * * * *',
+                        'select public.promote_due_requests()');
+  raise notice 'pg_cron: scheduled requests will promote themselves every minute.';
+exception when others then
+  raise warning 'pg_cron is NOT available (%). Scheduled requests will still be '
+                'promoted, but only while somebody has the app open — reminders '
+                'may be late. Enable pg_cron under Database -> Extensions.', sqlerrm;
+end $$;
+
+
 -- Mark this device as signed in, right now.
 --
 -- An RPC rather than letting the app PATCH the column, so the timestamp comes

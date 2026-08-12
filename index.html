@@ -2820,9 +2820,18 @@ function renderHistory() {
  * of them. */
 const finishedAt = (r) => r.completed_at || r.cancelled_at || r.created_at;
 
+/* When the clock on a job should start.
+ *
+ * For an ordinary request, when it was asked for. For a booking, the time it
+ * was booked FOR — a car booked at 9am for 4pm was not being delivered for
+ * seven hours, and counting from when it was raised would say it was. Claiming
+ * one early does not start the clock either: the porter is waiting, not
+ * working. */
+const workStarted = (r) => r.scheduled_for || r.created_at;
+
 function minutesTaken(r) {
   if (!r.completed_at) return "—";
-  const m = Math.round((new Date(r.completed_at) - new Date(r.created_at)) / 60000);
+  const m = Math.round((new Date(r.completed_at) - new Date(workStarted(r))) / 60000);
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
@@ -3252,8 +3261,11 @@ function adminAdvisors() {
 
 function adminHistoryView() {
   const done = adminHistory.filter(r => r.status === "complete");
-  const waits = done.map(r => mins(r.created_at, r.claimed_at)).filter(v => v != null);
-  const totals = done.map(r => mins(r.created_at, r.completed_at)).filter(v => v != null);
+  // Same baseline as minutesTaken: a booking's clock starts when it was due,
+  // not when it was written down, or every scheduled car would report hours of
+  // "wait" that nobody spent waiting.
+  const waits = done.map(r => mins(workStarted(r), r.claimed_at)).filter(v => v != null);
+  const totals = done.map(r => mins(workStarted(r), r.completed_at)).filter(v => v != null);
 
   const names = (fn) => [...new Set(adminHistory.map(fn).filter(Boolean))].sort();
   const sel = (id, label, key, opts) => `
