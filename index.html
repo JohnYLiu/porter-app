@@ -1257,6 +1257,7 @@ function signOut(reason = "") {
   releasePushSubscription();
 
   session = null;
+  lastTabsHtml = "";        // the next person gets their own bar, not this one's
   localStorage.removeItem(STORE);
   clearInterval(poller); poller = null;
   requests = []; advisors = []; tab = "queue";
@@ -1706,11 +1707,25 @@ function renderTabs() {
 
   const nav = $("tabs");
   nav.className = "herobar";
-  nav.innerHTML = heroTabs(list, waiting, heroTab());
+
+  // Only redraw when something actually differs.
+  //
+  // This runs on every poll, twenty times a minute, and it was rewriting the
+  // whole bar each time — which destroys and recreates every element in it. An
+  // <img> recreated that often visibly flickers on a phone, where the picture
+  // has to be decoded again; on a desktop it is fast enough to hide. It was
+  // also throwing away the buttons somebody might be pressing at that moment.
+  //
+  // Comparing the string we are about to write, not the DOM's innerHTML: the
+  // browser normalises that on read, so it never matches what was written and
+  // the guard would never fire.
+  const html = heroTabs(list, waiting, heroTab());
+  if (html === lastTabsHtml) return;
+  lastTabsHtml = html;
+  nav.innerHTML = html;
 
   nav.querySelectorAll("button").forEach(b =>
     b.onclick = () => { tab = b.dataset.tab; render(); });
-
 }
 
 // One flat tab. Used as-is by the cashier bar, and for everything either side
@@ -2649,93 +2664,46 @@ function viewportReadout() {
   ].join(" · ");
 }
 
+/* Two sub-tabs. Appearance is its own, and last: sitting as a heading among
+   the notification switches it read as a kind of notification, which it is not
+   — it is the only thing here that changes how the app looks rather than when
+   it interrupts you. */
+let settingsSub = "notifications";
+
+const settingNote = (t) =>
+  t ? `<br><span style="font-size:.76rem;color:var(--dimmer)">${esc(t)}</span>` : "";
+
 function renderSettings() {
-  const u = session.user;
-  const note = (t) =>
-    t ? `<br><span style="font-size:.76rem;color:var(--dimmer)">${esc(t)}</span>` : "";
-
-  const row = (key, label, sub) => `
-    <label class="perm ${u[key] ? "on" : ""}" style="min-height:56px">
-      <input type="checkbox" data-pref="${key}" ${u[key] ? "checked" : ""}>
-      <span>${esc(label)}${note(sub)}</span>
-    </label>`;
-
-  // One of three, so radios rather than checkboxes — the states are mutually
-  // exclusive, and three tick boxes would let somebody choose two of them.
-  // Missing means none. An account that predates this setting, or one loaded
-  // before the column existed, should show a chosen option rather than three
-  // empty circles that look like the screen failed to load.
-  const msgPref = u.notify_messages || "none";
-  const choice = (value, label, sub) => `
-    <label class="perm ${msgPref === value ? "on" : ""}" style="min-height:56px">
-      <input type="radio" name="msgpref" data-msg="${value}"
-             ${msgPref === value ? "checked" : ""}>
-      <span>${esc(label)}${note(sub)}</span>
-    </label>`;
+  const pill = (id, label) =>
+    `<button data-settings="${id}" aria-current="${settingsSub === id}">${esc(label)}</button>`;
 
   $("view").innerHTML = `
     <h2 class="title">Settings</h2>
-    <div class="zonebar">
-      <button data-settings="notifications" aria-current="true">Notifications</button>
-    </div>
+    <div class="zonebar">${pill("notifications", "Notifications")}${pill("appearance", "Appearance")}</div>
 
-    ${pushCard()}
-
-    <p class="sub">Choose what you want to be told about. Only you can change
-       these — nobody else sets them for you.</p>
-
-    <div class="perms" style="grid-template-columns:1fr">
-      ${row("notify_lower", "Lower Lot Car Requests", "A request for lower lot porters has been issued")}
-      ${row("notify_510", "510 Car Requests", "A request for 510 porters has been issued")}
-      ${row("notify_delivered", "My Car Delivered", "A car you requested has arrived")}
-    </div>
-
-    <h3 class="setsub">Scheduled requests</h3>
-    <div class="perms" style="grid-template-columns:1fr">
-      ${row("notify_sched_lower", "Lower Lot Scheduled",
-            "A request for lower lot porters has been booked for later")}
-      ${row("notify_sched_510", "510 Scheduled",
-            "A request for 510 porters has been booked for later")}
-      ${row("notify_reminder", "My Scheduled Car Is Due",
-            "A scheduled car you claimed has reached its time")}
-    </div>
-
-    <h3 class="setsub">Appearance</h3>
-    <div class="perms" style="grid-template-columns:1fr">
-      <label class="perm ${faceHero ? "on" : ""}" style="min-height:56px">
-        <input type="checkbox" id="faceHero" ${faceHero ? "checked" : ""}>
-        <span>A special version of the Issue button${note(
-          "Replaces the + in the middle of the bar. This phone only.")}</span>
-      </label>
-    </div>
-
-    <h3 class="setsub">Messages</h3>
-    <div class="perms" style="grid-template-columns:1fr">
-      ${choice("none", "None", "Never tell me about messages")}
-      ${choice("mine", "My cars", "Only cars I requested, or cars I have claimed")}
-      ${choice("all",  "Every car", "Any message about any car")}
-    </div>
-
-    ${isAdvisorAccount(u) ? `
-      <h3 class="setsub">Your customers' cars</h3>
-      <p class="sub" style="margin:-6px 0 12px">Cars whose key tag starts with your
-         character, whoever raised the request.</p>
-      <div class="perms" style="grid-template-columns:1fr">
-        ${row("notify_advisor_delivered", "Delivered",
-              "A car belonging to one of your customers (according to the key-tag) has arrived")}
-        ${row("notify_advisor_messages", "Messages",
-              "Somebody has written about a car belonging to one of your customers")}
-        ${row("notify_advisor_scheduled", "Scheduled",
-              "A car belonging to one of your customers has been booked for later")}
-      </div>` : ""}
+    ${settingsSub === "appearance" ? appearanceSettings() : notificationSettings()}
 
     <div id="prefMsg"></div>
     <p class="diag">${esc(viewportReadout())}</p>`;
 
+  $("view").querySelectorAll("[data-settings]").forEach(b =>
+    b.onclick = () => { settingsSub = b.dataset.settings; renderSettings(); });
+
+  if (settingsSub === "appearance") {
+    // A device setting, saved on the spot. Nothing to do with the account, so
+    // it is not part of the notification save below.
+    $("faceHero").onchange = (e) => {
+      faceHero = e.target.checked;
+      localStorage.setItem(FACE_KEY, faceHero ? "1" : "0");
+      render();
+    };
+    return;
+  }
+
   if ($("enablePush")) $("enablePush").onclick = enablePush;
 
   // Every control sends the WHOLE set, not just the one that moved. The RPC
-  // writes all six columns, so sending a subset would quietly reset the rest.
+  // writes every column, so sending a subset would quietly reset the rest.
   const save = async () => {
     const wanted = {};
     $("view").querySelectorAll("[data-pref]").forEach(b => { wanted[b.dataset.pref] = b.checked; });
@@ -2760,23 +2728,93 @@ function renderSettings() {
       renderSettings();
     } catch (e) {
       // Re-render FIRST, then write the error into the fresh element. The other
-      // way round — which is how this was — the message went into a node that
-      // renderSettings replaced a line later, so a failed save silently put the
-      // switch back and said nothing about why.
+      // way round the message went into a node that renderSettings replaced a
+      // line later, so a failed save silently put the switch back and said
+      // nothing about why.
       renderSettings();
       $("prefMsg").innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
     }
   };
 
   $("view").querySelectorAll("[data-pref], [data-msg]").forEach(c => c.onchange = save);
+}
 
-  // Not part of the notification set — it is a device setting, saved on the
-  // spot and reflected in the bar immediately.
-  $("faceHero").onchange = (e) => {
-    faceHero = e.target.checked;
-    localStorage.setItem(FACE_KEY, faceHero ? "1" : "0");
-    render();
-  };
+function appearanceSettings() {
+  return `
+    <p class="sub">How the app looks on this device. Only you see this, and only
+       here — it is not carried to your other devices.</p>
+    <div class="perms" style="grid-template-columns:1fr">
+      <label class="perm ${faceHero ? "on" : ""}" style="min-height:56px">
+        <input type="checkbox" id="faceHero" ${faceHero ? "checked" : ""}>
+        <span>A special version of the Issue button${settingNote(
+          "Replaces the + in the middle of the bar.")}</span>
+      </label>
+    </div>`;
+}
+
+function notificationSettings() {
+  const u = session.user;
+  const note = settingNote;
+
+  const row = (key, label, sub) => `
+    <label class="perm ${u[key] ? "on" : ""}" style="min-height:56px">
+      <input type="checkbox" data-pref="${key}" ${u[key] ? "checked" : ""}>
+      <span>${esc(label)}${note(sub)}</span>
+    </label>`;
+
+  // One of three, so radios rather than checkboxes — the states are mutually
+  // exclusive, and three tick boxes would let somebody choose two of them.
+  // Missing means none, so an account that predates the setting shows a chosen
+  // option rather than three empty circles that look like a failed load.
+  const msgPref = u.notify_messages || "none";
+  const choice = (value, label, sub) => `
+    <label class="perm ${msgPref === value ? "on" : ""}" style="min-height:56px">
+      <input type="radio" name="msgpref" data-msg="${value}"
+             ${msgPref === value ? "checked" : ""}>
+      <span>${esc(label)}${note(sub)}</span>
+    </label>`;
+
+  return `
+    ${pushCard()}
+
+    <p class="sub">Choose what you want to be told about. Only you can change
+       these — nobody else sets them for you.</p>
+
+    <div class="perms" style="grid-template-columns:1fr">
+      ${row("notify_lower", "Lower Lot Car Requests", "A request for lower lot porters has been issued")}
+      ${row("notify_510", "510 Car Requests", "A request for 510 porters has been issued")}
+      ${row("notify_delivered", "My Car Delivered", "A car you requested has arrived")}
+    </div>
+
+    <h3 class="setsub">Scheduled requests</h3>
+    <div class="perms" style="grid-template-columns:1fr">
+      ${row("notify_sched_lower", "Lower Lot Scheduled",
+            "A request for lower lot porters has been booked for later")}
+      ${row("notify_sched_510", "510 Scheduled",
+            "A request for 510 porters has been booked for later")}
+      ${row("notify_reminder", "My Scheduled Car Is Due",
+            "A scheduled car you claimed has reached its time")}
+    </div>
+
+    <h3 class="setsub">Messages</h3>
+    <div class="perms" style="grid-template-columns:1fr">
+      ${choice("none", "None", "Never tell me about messages")}
+      ${choice("mine", "My cars", "Only cars I requested, or cars I have claimed")}
+      ${choice("all",  "Every car", "Any message about any car")}
+    </div>
+
+    ${isAdvisorAccount(u) ? `
+      <h3 class="setsub">Your customers' cars</h3>
+      <p class="sub" style="margin:-6px 0 12px">Cars whose key tag starts with your
+         character, whoever raised the request.</p>
+      <div class="perms" style="grid-template-columns:1fr">
+        ${row("notify_advisor_delivered", "Delivered",
+              "A car belonging to one of your customers (according to the key-tag) has arrived")}
+        ${row("notify_advisor_messages", "Messages",
+              "Somebody has written about a car belonging to one of your customers")}
+        ${row("notify_advisor_scheduled", "Scheduled",
+              "A car belonging to one of your customers has been booked for later")}
+      </div>` : ""}`;
 }
 
 /* --- History ------------------------------------------------------------- */
@@ -3462,6 +3500,7 @@ async function adminCall(payload) {
 let sheetId = null;
 let msgDraft = "";       // what is half-typed into the open sheet
 let swVersion = null;    // which build this device is actually running
+let lastTabsHtml = "";   // so the tab bar is only rebuilt when it changes
 let sheetInline = false;
 
 /* A request's detail is shown one of two ways: as a modal sheet over a list,
