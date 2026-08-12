@@ -1385,12 +1385,26 @@ async function subscribePush() {
   pushOn = true;
 }
 
+/* Is this an iPhone or iPad?
+   Only asked to decide whether installing is a precondition for notifications,
+   which is an Apple rule and nobody else's. iPadOS 13 and later report
+   themselves as a Mac, so the touch points are what give those away. */
+const isIOS = () =>
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
 function pushCard() {
   if (!canClaim() || pushOn || !pushSupported()) return "";
 
-  // On iOS this is not a preference, it is a precondition. Saying so beats a
-  // permission prompt that silently never appears.
-  if (!isInstalled()) {
+  // On iOS installing is not a preference, it is a precondition: Safari will
+  // not deliver a push to a tab, only to something on the Home Screen. Saying
+  // so beats a permission prompt that silently never appears.
+  //
+  // Nowhere else works that way. On a computer, and on Android, a tab gets
+  // notifications perfectly well — so telling those people to tap Share was
+  // instructions for a button they do not have, in front of a feature they
+  // could already use. They get the ordinary button below instead.
+  if (isIOS() && !isInstalled()) {
     return `<div class="msg info" style="margin-bottom:14px">
       <b>Get alerted about new cars</b><br>
       Add this to your Home Screen first — tap Share, then "Add to Home Screen",
@@ -1398,9 +1412,14 @@ function pushCard() {
     </div>`;
   }
   if (Notification.permission === "denied") {
+    // Where to undo this is not the same on every platform, and sending
+    // somebody to an iOS Settings screen they do not have is the same mistake
+    // as the Home Screen advice above.
     return `<div class="msg err" style="margin-bottom:14px">
-      Notifications are blocked for this app. Turn them back on in
-      Settings → Notifications → Porter.
+      Notifications are blocked for this app. ${isIOS()
+        ? `Turn them back on in Settings → Notifications → Porter.`
+        : `Turn them back on in this site's permissions — the icon at the left
+           of the address bar.`}
     </div>`;
   }
   return `<button class="btn" id="enablePush" style="margin:0 0 14px">
