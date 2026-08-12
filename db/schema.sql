@@ -148,6 +148,12 @@ create table if not exists public.users (
 
   notify_advisor_scheduled boolean not null default false,
 
+  -- For the cashier who booked it: their scheduled car has reached its time and
+  -- gone somewhere — onto the queue, or straight to the porter who had already
+  -- taken it. They asked for it hours ago and have no other way of knowing it
+  -- actually happened.
+  notify_sched_moved boolean not null default false,
+
   -- Admin is John, and is not one of the checkboxes. Adding and editing users
   -- is admin-only; managers cannot promote themselves.
   is_admin    boolean     not null default false,
@@ -567,6 +573,7 @@ alter table public.users add column if not exists notify_sched_510   boolean not
 alter table public.users add column if not exists notify_sched_lower boolean not null default false;
 alter table public.users add column if not exists notify_reminder    boolean not null default true;
 alter table public.users add column if not exists notify_advisor_scheduled boolean not null default false;
+alter table public.users add column if not exists notify_sched_moved boolean not null default false;
 
 -- Seed each person's preferences from what they were already getting, once.
 -- Guarded on "nobody has any set yet" so it cannot overwrite a real choice on a
@@ -1161,11 +1168,14 @@ $$;
 drop function if exists public.set_notification_preferences(boolean, boolean, boolean);
 drop function if exists public.set_notification_preferences(
   boolean, boolean, boolean, text, boolean, boolean);
+drop function if exists public.set_notification_preferences(
+  boolean, boolean, boolean, text, boolean, boolean,
+  boolean, boolean, boolean, boolean);
 create or replace function public.set_notification_preferences(
   p_510 boolean, p_lower boolean, p_delivered boolean,
   p_messages text, p_advisor_delivered boolean, p_advisor_messages boolean,
   p_sched_510 boolean, p_sched_lower boolean, p_reminder boolean,
-  p_advisor_scheduled boolean)
+  p_advisor_scheduled boolean, p_sched_moved boolean)
 returns void
 language sql security definer set search_path = '' as $$
   update public.users
@@ -1181,7 +1191,8 @@ language sql security definer set search_path = '' as $$
          notify_sched_510   = coalesce(p_sched_510, false),
          notify_sched_lower = coalesce(p_sched_lower, false),
          notify_reminder    = coalesce(p_reminder, false),
-         notify_advisor_scheduled = coalesce(p_advisor_scheduled, false)
+         notify_advisor_scheduled = coalesce(p_advisor_scheduled, false),
+         notify_sched_moved = coalesce(p_sched_moved, false)
    where id = auth.uid() and active;
 $$;
 
@@ -1399,12 +1410,22 @@ begin
   select value into v_secret from public.app_secrets where key = 'notify_secret';
   if v_secret is null then return new; end if;
 
+  -- Two different audiences, so two messages. The porters hear that there is a
+  -- car — either as an ordinary new request, or as a reminder to whoever took
+  -- it. The cashier who booked it hears that the thing they arranged has
+  -- happened, which is a different fact and a different setting.
   perform net.http_post(
     url     := public.notify_url(),
     body    := jsonb_build_object(
                  'record', to_jsonb(new),
                  'event',  case when new.status = 'claimed' then 'reminder'
                                 else 'requested' end),
+    headers := jsonb_build_object('Content-Type', 'application/json',
+                                  'x-notify-secret', v_secret));
+
+  perform net.http_post(
+    url     := public.notify_url(),
+    body    := jsonb_build_object('record', to_jsonb(new), 'event', 'moved'),
     headers := jsonb_build_object('Content-Type', 'application/json',
                                   'x-notify-secret', v_secret));
   return new;
@@ -1614,6 +1635,26 @@ language sql stable security definer set search_path = '' as $$
           case when r.zone = '510' then u.notify_sched_510 else u.notify_sched_lower end
        or (u.notify_advisor_scheduled and sa.id is not null and sa.id = r.advisor_id)
      )
+     and ps.claimed_at >= public.app_day_start();
+$$;
+
+
+-- Who hears that a booking they made has moved on.
+--
+-- The person who booked it, and nobody else. Not if they are also the porter
+-- who claimed it — then they are the one it moved TO, and they were told that
+-- by the reminder.
+create or replace function public.push_targets_promoted(p_request uuid)
+returns table(endpoint text, p256dh text, auth text)
+language sql stable security definer set search_path = '' as $$
+  select ps.endpoint, ps.p256dh, ps.auth
+    from public.push_subscriptions ps
+    join public.users u on u.id = ps.user_id
+    join public.requests r on r.id = p_request
+   where u.active
+     and u.notify_sched_moved
+     and ps.user_id = r.issued_by
+     and ps.user_id is distinct from r.claimed_by
      and ps.claimed_at >= public.app_day_start();
 $$;
 
@@ -1944,7 +1985,7 @@ grant execute on function public.app_can_claim_zone(text)   to authenticated;
 grant execute on function public.app_is_manager()           to authenticated;
 grant execute on function public.set_notification_preferences(
   boolean, boolean, boolean, text, boolean, boolean,
-  boolean, boolean, boolean, boolean) to authenticated;
+  boolean, boolean, boolean, boolean, boolean) to authenticated;
 
 -- --- Tables: nothing at all for logged-out callers --------------------------
 --
@@ -2032,6 +2073,7 @@ grant execute on function public.push_targets_delivered(uuid)      to service_ro
 grant execute on function public.push_targets_message(uuid, uuid) to service_role;
 grant execute on function public.push_targets_scheduled(uuid)     to service_role;
 grant execute on function public.push_targets_reminder(uuid)      to service_role;
+grant execute on function public.push_targets_promoted(uuid)      to service_role;
 grant execute on function public.forget_push_endpoint(text) to service_role;
 grant execute on function public.verify_login_code(text)    to service_role;
 grant execute on function public.set_login_code(uuid, text) to service_role;

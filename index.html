@@ -471,6 +471,10 @@ nav button .clockico { width: 1.15rem; height: 1.15rem; vertical-align: 0; }
 .setsub { font-size: .78rem; font-weight: 700; color: var(--dim);
           text-transform: uppercase; letter-spacing: .08em;
           margin: 26px 0 10px; }
+/* Quieter than the section above it — it sorts the switches within a section
+   rather than starting a new one. */
+.setgrp { font-size: .72rem; font-weight: 600; color: var(--dimmer);
+          letter-spacing: .04em; margin: 14px 0 6px; }
 
 h2.title { font-size: 1.35rem; font-weight: 650; margin: 2px 0 14px; letter-spacing: -.01em; }
 .sub { color: var(--dimmer); font-size: .85rem; margin: -8px 0 16px; }
@@ -2722,6 +2726,7 @@ function renderSettings() {
         p_sched_lower: !!wanted.notify_sched_lower,
         p_reminder:    !!wanted.notify_reminder,
         p_advisor_scheduled: !!wanted.notify_advisor_scheduled,
+        p_sched_moved: !!wanted.notify_sched_moved,
       }});
       Object.assign(session.user, wanted);
       saveSession();
@@ -2774,19 +2779,31 @@ function notificationSettings() {
       <span>${esc(label)}${note(sub)}</span>
     </label>`;
 
+  // Nobody holds only one of these roles in practice — a cashier claims cars and
+  // a porter raises the odd request — so both groups are shown to everyone.
+  // They are labels for what a setting is ABOUT, not a filter on who may have
+  // it.
+  const group = (t) => `<p class="setgrp">${esc(t)}</p>`;
+
   return `
     ${pushCard()}
 
     <p class="sub">Choose what you want to be told about. Only you can change
        these — nobody else sets them for you.</p>
 
+    <h3 class="setsub">Requests</h3>
+    ${group("For porters")}
     <div class="perms" style="grid-template-columns:1fr">
       ${row("notify_lower", "Lower Lot Car Requests", "A request for lower lot porters has been issued")}
       ${row("notify_510", "510 Car Requests", "A request for 510 porters has been issued")}
+    </div>
+    ${group("For cashiers")}
+    <div class="perms" style="grid-template-columns:1fr">
       ${row("notify_delivered", "My Car Delivered", "A car you requested has arrived")}
     </div>
 
     <h3 class="setsub">Scheduled requests</h3>
+    ${group("For porters")}
     <div class="perms" style="grid-template-columns:1fr">
       ${row("notify_sched_lower", "Lower Lot Scheduled",
             "A request for lower lot porters has been booked for later")}
@@ -2794,6 +2811,11 @@ function notificationSettings() {
             "A request for 510 porters has been booked for later")}
       ${row("notify_reminder", "My Scheduled Car Is Due",
             "A scheduled car you claimed has reached its time")}
+    </div>
+    ${group("For cashiers")}
+    <div class="perms" style="grid-template-columns:1fr">
+      ${row("notify_sched_moved", "My Scheduled Car Has Moved",
+            "A car you booked has reached its time and gone to the queue, or to the porter who claimed it")}
     </div>
 
     <h3 class="setsub">Messages</h3>

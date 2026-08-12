@@ -242,6 +242,7 @@ Deno.serve(async (req) => {
   //   requested  a car is waiting — goes to whoever asked for that area
   //   scheduled  a car has been booked for later — same audience, own setting
   //   reminder   a booking somebody took is due now — only to that person
+  //   moved      a booking has reached its time — only to whoever booked it
   //   delivered  it has arrived   — the cashier who asked, and the advisor
   //                                 whose key character is on the tag
   //   message    somebody said something — depends on each person's setting,
@@ -294,6 +295,23 @@ Deno.serve(async (req) => {
     message = {
       title: `Reminder: ${String(row.car_code ?? "a car")} Scheduled for Now`,
       body: describeRequest(row).body,
+    };
+  } else if (event === "moved") {
+    // The cashier's side of a promotion: the car they booked hours ago has
+    // reached its time and gone somewhere.
+    const requestId = String(row.id ?? "");
+    if (!requestId) {
+      return new Response(JSON.stringify({ skipped: "no id on the row" }), { status: 200 });
+    }
+    const claimed = String(row.status ?? "") === "claimed";
+    const who = (await porterName(String(row.claimed_by ?? ""))).trim().replace(/^by /, "");
+    rpc = "push_targets_promoted";
+    args = { p_request: requestId };
+    message = {
+      title: `Scheduled ${String(row.car_code ?? "car")} moved to ${claimed ? "Active" : "Queue"}`,
+      // Who has it, if anyone does. Unclaimed it is on the queue and the route
+      // is the useful thing, exactly as on an ordinary new request.
+      body: claimed ? (who ? `Claimed by ${who}` : "Claimed") : describeRequest(row).body,
     };
   } else if (event === "delivered") {
     const requestId = String(row.id ?? "");
