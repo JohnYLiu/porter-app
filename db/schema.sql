@@ -2141,3 +2141,26 @@ begin
   end if;
 end
 $$;
+
+
+-- ============================================================================
+-- 9. What this run actually achieved
+--
+-- The last statement in the file, so its output is what the SQL editor shows.
+-- Everything above either succeeds or raises, with one exception: the pg_cron
+-- block has to be allowed to fail, because it depends on an extension rather
+-- than on SQL. That made "Success. No rows returned" ambiguous — it could mean
+-- the scheduler was set up, or that it quietly was not.
+--
+-- One row, saying so in words.
+-- ============================================================================
+select
+  'porter dispatch schema applied' as result,
+  case when exists (select 1 from pg_extension where extname = 'pg_cron')
+       then case when exists (select 1 from cron.job where jobname = 'porter-promote')
+                 then 'yes - scheduled requests promote themselves every minute'
+                 else 'NO - pg_cron is installed but the job is missing' end
+       else 'NO - enable pg_cron under Database -> Extensions, then run this again'
+  end as automatic_promotion,
+  (select count(*) from public.service_advisors where active)  as advisors,
+  (select count(*) from public.users where active)             as active_staff;
