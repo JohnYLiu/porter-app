@@ -3723,6 +3723,16 @@ async function refresh() {
   // issuing a request outright impossible. The badges still update.
   if (tab === "issue") { renderTabs(); return; }
 
+  // The Schedule tab's New Request sub-tab IS that form, so it is the same trap
+  // and it was walked straight into: the poll rebuilt the form every three
+  // seconds, emptying the key tag, and on a mouse the focus that follows a
+  // rebuild dragged the screen back to the top — you could not scroll far
+  // enough to reach the Send button before it snatched you back.
+  //
+  // Only the form is held. The Scheduled list beside it is live content and
+  // should keep counting down.
+  if (tab === "schedule" && schedSub === "new") { renderTabs(); return; }
+
   // Admin is the same trap, and worse. It has forms, and it shows a newly
   // created code exactly once — a background re-render would wipe that off the
   // screen a few seconds after it appeared, and the code cannot be recovered.
