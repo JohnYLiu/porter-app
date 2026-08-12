@@ -118,6 +118,24 @@ create table if not exists public.users (
   notify_lower     boolean not null default false,
   notify_delivered boolean not null default false,
 
+  -- How much of the talk about cars this person wants to hear.
+  --   none  say nothing
+  --   mine  only cars they asked for or are driving
+  --   all   every car
+  -- A three-way rather than a checkbox because "all" is genuinely useful to a
+  -- manager and genuinely unbearable to everyone else.
+  notify_messages  text not null default 'none'
+                   check (notify_messages in ('none', 'mine', 'all')),
+
+  -- Advisors only, and about THEIR cars — the ones whose key tag starts with
+  -- their character — regardless of who raised the request. An advisor is
+  -- answering for those cars to the customer, so "did it arrive" and "what is
+  -- being said about it" are their questions even when the request is somebody
+  -- else's. Harmless on an account with no advisor attached: nothing will ever
+  -- match.
+  notify_advisor_delivered boolean not null default false,
+  notify_advisor_messages  boolean not null default false,
+
   -- Admin is John, and is not one of the checkboxes. Adding and editing users
   -- is admin-only; managers cannot promote themselves.
   is_admin    boolean     not null default false,
@@ -497,6 +515,12 @@ alter table public.requests alter column advisor_id drop not null;
 alter table public.users add column if not exists notify_510       boolean not null default false;
 alter table public.users add column if not exists notify_lower     boolean not null default false;
 alter table public.users add column if not exists notify_delivered boolean not null default false;
+alter table public.users add column if not exists notify_messages  text not null default 'none';
+alter table public.users drop constraint if exists users_notify_messages_check;
+alter table public.users add  constraint users_notify_messages_check
+  check (notify_messages in ('none', 'mine', 'all'));
+alter table public.users add column if not exists notify_advisor_delivered boolean not null default false;
+alter table public.users add column if not exists notify_advisor_messages  boolean not null default false;
 
 -- Seed each person's preferences from what they were already getting, once.
 -- Guarded on "nobody has any set yet" so it cannot overwrite a real choice on a
@@ -1062,14 +1086,22 @@ $$;
 -- reason, and widening it so people could edit their own row would hand
 -- everybody is_admin. This writes exactly three columns, always for the caller,
 -- and cannot touch anything else.
+drop function if exists public.set_notification_preferences(boolean, boolean, boolean);
 create or replace function public.set_notification_preferences(
-  p_510 boolean, p_lower boolean, p_delivered boolean)
+  p_510 boolean, p_lower boolean, p_delivered boolean,
+  p_messages text, p_advisor_delivered boolean, p_advisor_messages boolean)
 returns void
 language sql security definer set search_path = '' as $$
   update public.users
      set notify_510       = coalesce(p_510, false),
          notify_lower     = coalesce(p_lower, false),
-         notify_delivered = coalesce(p_delivered, false)
+         notify_delivered = coalesce(p_delivered, false),
+         -- Anything unrecognised means silence. A client sending nonsense
+         -- should not be able to sign somebody up for every message.
+         notify_messages  = case when p_messages in ('none','mine','all')
+                                 then p_messages else 'none' end,
+         notify_advisor_delivered = coalesce(p_advisor_delivered, false),
+         notify_advisor_messages  = coalesce(p_advisor_messages, false)
    where id = auth.uid() and active;
 $$;
 
@@ -1116,15 +1148,26 @@ $$;
 -- Who to tell that a car they asked for has arrived: the cashier who issued it,
 -- if they want to hear about it. Same "signed in today" rule — somebody who has
 -- gone home does not need to know a car moved.
-create or replace function public.push_targets_delivered(p_user uuid)
+-- Takes the REQUEST, not a person: two different people can want to hear about
+-- the same car arriving, and only the row knows who they are.
+drop function if exists public.push_targets_delivered(uuid);
+create or replace function public.push_targets_delivered(p_request uuid)
 returns table(endpoint text, p256dh text, auth text)
 language sql stable security definer set search_path = '' as $$
   select ps.endpoint, ps.p256dh, ps.auth
     from public.push_subscriptions ps
     join public.users u on u.id = ps.user_id
-   where ps.user_id = p_user
-     and u.active
-     and u.notify_delivered
+    join public.requests r on r.id = p_request
+    -- Left join: most accounts are not an advisor, and they still qualify on
+    -- the first branch below.
+    left join public.service_advisors sa on sa.user_id = u.id
+   where u.active
+     and (
+          -- The person who asked for it.
+          (u.notify_delivered and r.issued_by = u.id)
+          -- Or the advisor whose key character is on the tag, whoever raised it.
+       or (u.notify_advisor_delivered and sa.id is not null and sa.id = r.advisor_id)
+     )
      -- THIS DEVICE was signed in today, not "this person signed in somewhere
      -- today". The old test asked login_attempts, which is per-person: a phone
      -- that had been logged out went on being buzzed as soon as its owner
@@ -1252,6 +1295,54 @@ exception when others then
 end;
 $$;
 
+-- --- and when somebody says something about a car ---------------------------
+--
+-- Carries the car code with it. The Edge Function would otherwise have to go
+-- and fetch the request just to name the notification, and this trigger is
+-- already holding the row.
+create or replace function public.notify_new_message()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_secret text;
+  v_code   text;
+begin
+  select value into v_secret from public.app_secrets where key = 'notify_secret';
+  if v_secret is null then
+    return new;
+  end if;
+
+  select car_code into v_code from public.requests where id = new.request_id;
+
+  perform net.http_post(
+    url     := public.notify_url(),
+    body    := jsonb_build_object(
+                 'event',  'message',
+                 'record', jsonb_build_object(
+                   'request_id', new.request_id,
+                   'author_id',  new.author_id,
+                   'body',       new.body,
+                   'car_code',   v_code)),
+    headers := jsonb_build_object(
+                 'Content-Type',    'application/json',
+                 'x-notify-secret', v_secret)
+  );
+  return new;
+exception when others then
+  -- Same rule as the other two: saying something must never fail because the
+  -- notification could not be sent.
+  raise warning 'notify_new_message failed: %', sqlerrm;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_on_message on public.request_messages;
+create trigger notify_on_message
+  after insert on public.request_messages
+  for each row execute function public.notify_new_message();
+
+
 drop trigger if exists notify_on_delivered on public.requests;
 create trigger notify_on_delivered
   after update on public.requests
@@ -1343,6 +1434,34 @@ begin
 
   return v_row;
 end;
+$$;
+
+
+-- Who hears about a message on a car.
+--
+-- Never the person who wrote it. Being buzzed by your own sentence is the
+-- fastest way to make somebody turn the whole feature off, and the author is
+-- looking at the screen it appeared on.
+create or replace function public.push_targets_message(p_request uuid, p_author uuid)
+returns table(endpoint text, p256dh text, auth text)
+language sql stable security definer set search_path = '' as $$
+  select ps.endpoint, ps.p256dh, ps.auth
+    from public.push_subscriptions ps
+    join public.users u on u.id = ps.user_id
+    join public.requests r on r.id = p_request
+    left join public.service_advisors sa on sa.user_id = u.id
+   where u.active
+     and ps.user_id is distinct from p_author
+     and (
+          u.notify_messages = 'all'
+          -- "Mine" is both ends of the job: the cashier who asked for the car
+          -- and the porter driving it are the two people a message is usually
+          -- aimed at.
+       or (u.notify_messages = 'mine'
+           and (r.issued_by = u.id or r.claimed_by = u.id))
+       or (u.notify_advisor_messages and sa.id is not null and sa.id = r.advisor_id)
+     )
+     and ps.claimed_at >= public.app_day_start();
 $$;
 
 
@@ -1558,8 +1677,8 @@ grant execute on function public.app_can_issue()            to authenticated;
 grant execute on function public.app_can_claim()            to authenticated;
 grant execute on function public.app_can_claim_zone(text)   to authenticated;
 grant execute on function public.app_is_manager()           to authenticated;
-grant execute on function public.set_notification_preferences(boolean, boolean, boolean)
-  to authenticated;
+grant execute on function public.set_notification_preferences(
+  boolean, boolean, boolean, text, boolean, boolean) to authenticated;
 
 -- --- Tables: nothing at all for logged-out callers --------------------------
 --
@@ -1642,6 +1761,7 @@ revoke all on function public.verify_login_code(text)      from public, anon, au
 revoke all on function public.set_login_code(uuid, text)   from public, anon, authenticated;
 grant execute on function public.push_targets(text)                to service_role;
 grant execute on function public.push_targets_delivered(uuid)      to service_role;
+grant execute on function public.push_targets_message(uuid, uuid) to service_role;
 grant execute on function public.forget_push_endpoint(text) to service_role;
 grant execute on function public.verify_login_code(text)    to service_role;
 grant execute on function public.set_login_code(uuid, text) to service_role;

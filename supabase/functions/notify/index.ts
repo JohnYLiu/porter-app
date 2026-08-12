@@ -210,24 +210,45 @@ Deno.serve(async (req) => {
   } catch {
     return new Response("Bad request", { status: 400 });
   }
-  // Two things get announced, to two different audiences.
+  // Three things get announced, to three different audiences.
   //
   //   requested  a car is waiting — goes to whoever asked for that area
-  //   delivered  it has arrived   — goes to the cashier who requested it
+  //   delivered  it has arrived   — the cashier who asked, and the advisor
+  //                                 whose key character is on the tag
+  //   message    somebody said something — depends on each person's setting,
+  //                                 and never goes back to whoever wrote it
   //
-  // Both are opt-in per person, and both respect "signed in today", so nobody
-  // is buzzed on their day off.
+  // All three are opt-in per person, and all three respect "this device was
+  // signed in today", so nobody is buzzed on their day off.
+  //
+  // Who receives one is decided entirely in SQL. This function does not know
+  // the rules and should not: they depend on columns and on who claimed what,
+  // and a copy of them here would be a second place to keep them right.
   let rpc: string;
   let args: Record<string, unknown>;
   let message: { title: string; body: string };
 
-  if (event === "delivered") {
-    const issuedBy = String(row.issued_by ?? "");
-    if (!issuedBy) {
-      return new Response(JSON.stringify({ skipped: "no issuer on the row" }), { status: 200 });
+  if (event === "message") {
+    const requestId = String(row.request_id ?? "");
+    if (!requestId) {
+      return new Response(JSON.stringify({ skipped: "no request on the message" }), { status: 200 });
+    }
+    rpc = "push_targets_message";
+    args = { p_request: requestId, p_author: String(row.author_id ?? "") };
+    message = {
+      title: `Message Regarding ${String(row.car_code ?? "a car")}`,
+      // The message itself, as written. Unlike the route line below this is
+      // somebody's own words, and trimming them to ASCII would mangle what
+      // they actually said.
+      body: String(row.body ?? ""),
+    };
+  } else if (event === "delivered") {
+    const requestId = String(row.id ?? "");
+    if (!requestId) {
+      return new Response(JSON.stringify({ skipped: "no id on the row" }), { status: 200 });
     }
     rpc = "push_targets_delivered";
-    args = { p_user: issuedBy };
+    args = { p_request: requestId };
     message = { title: String(row.car_code ?? "Car delivered"),
                 body: "Delivered" + (await porterName(String(row.claimed_by ?? ""))) };
   } else {
