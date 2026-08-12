@@ -33,10 +33,13 @@ select net.http_post(
 select pg_sleep(9);   -- pg_net's worker is not instant; too short and you
                       -- read the PREVIOUS run's answer and misdiagnose it
 
+-- push_targets() takes a request now, not an area — who NOT to notify is on the
+-- row. So this counts devices that are eligible at all rather than per area:
+-- a device is on the list if it said it was signed in since the last 3am.
 select (select count(*) from public.login_attempts
          where succeeded and at >= public.app_day_start())        as logins_today,
-       (select count(*) from public.push_targets('510'))          as targets_510,
-       (select count(*) from public.push_targets('lower_lot'))    as targets_lower,
+       (select count(*) from public.push_subscriptions
+         where claimed_at >= public.app_day_start())              as devices_on_shift,
        (select count(*) from public.push_subscriptions)           as subscriptions,
        r.status_code,
        left(coalesce(r.content, r.error_msg, '(no body)'), 300)   as response,

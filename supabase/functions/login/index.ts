@@ -212,11 +212,13 @@ Deno.serve(async (req) => {
     return json({ error: "Could not start your session" }, 500);
   }
 
-  // This row is not just an audit trail — push_targets() uses "signed in since
-  // the last 3am" to decide who is on shift and therefore who gets notified.
-  // If this insert fails, logging in still works perfectly and notifications
-  // quietly stop for everyone, with nothing anywhere to say why. So its result
-  // is checked and shouted about, even though it must never block a login.
+  // An audit trail, and now only that: who gets notified is decided by
+  // push_subscriptions.claimed_at, which each device writes for itself. This
+  // row used to be what stood in for "on shift", and a silent failure here once
+  // stopped notifications for everybody with nothing anywhere to say why. Its
+  // result is still checked and shouted about — a login record that quietly
+  // does not exist is worth knowing about on its own account — but it no longer
+  // takes the notifications down with it.
   const { error: attemptErr } = await admin.from("login_attempts").insert({
     ip, code_fingerprint: fp, succeeded: true, user_id: userId,
   });

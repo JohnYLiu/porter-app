@@ -1119,15 +1119,21 @@ $$;
 -- service_role only: this returns a list of push endpoints, which is exactly
 -- the sort of thing that should never be readable from a phone.
 drop function if exists public.push_targets(text);
+drop function if exists public.push_targets(uuid);
 
-create or replace function public.push_targets(p_zone text)
+-- Takes the request rather than just its area, because who NOT to tell is on
+-- the row: the cashier who raised it is standing there having raised it.
+create or replace function public.push_targets(p_request uuid)
 returns table(endpoint text, p256dh text, auth text)
 language sql stable security definer set search_path = '' as $$
   select ps.endpoint, ps.p256dh, ps.auth
     from public.push_subscriptions ps
     join public.users u on u.id = ps.user_id
+    join public.requests r on r.id = p_request
    where u.active
-     and case when p_zone = '510' then u.notify_510 else u.notify_lower end
+     -- Never back to whoever asked for the car.
+     and ps.user_id is distinct from r.issued_by
+     and case when r.zone = '510' then u.notify_510 else u.notify_lower end
      -- THIS DEVICE was signed in today, not "this person signed in somewhere
      -- today". The old test asked login_attempts, which is per-person: a phone
      -- that had been logged out went on being buzzed as soon as its owner
@@ -1162,6 +1168,8 @@ language sql stable security definer set search_path = '' as $$
     -- the first branch below.
     left join public.service_advisors sa on sa.user_id = u.id
    where u.active
+     -- Never back to the porter who just delivered it. They were there.
+     and ps.user_id is distinct from r.claimed_by
      and (
           -- The person who asked for it.
           (u.notify_delivered and r.issued_by = u.id)
@@ -1759,7 +1767,7 @@ grant execute on function public.claim_push(text)                       to authe
 -- at whatever rate the internet can manage.
 revoke all on function public.verify_login_code(text)      from public, anon, authenticated;
 revoke all on function public.set_login_code(uuid, text)   from public, anon, authenticated;
-grant execute on function public.push_targets(text)                to service_role;
+grant execute on function public.push_targets(uuid)                to service_role;
 grant execute on function public.push_targets_delivered(uuid)      to service_role;
 grant execute on function public.push_targets_message(uuid, uuid) to service_role;
 grant execute on function public.forget_push_endpoint(text) to service_role;

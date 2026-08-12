@@ -176,7 +176,10 @@ function describeRequest(row: Record<string, unknown>) {
   // so the notification stays within ASCII. The app's own route display keeps
   // the real arrow, where it renders correctly.
   return {
-    title: String(row.car_code ?? "New car request"),
+    // "1234 Requested". The tag first, because that is what a porter is
+    // looking for on a lock screen; the word after it, because a bare code
+    // does not say what happened to it.
+    title: `${String(row.car_code ?? "A car")} Requested`,
     body: legs.join(" -> "),
   };
 }
@@ -249,14 +252,22 @@ Deno.serve(async (req) => {
     }
     rpc = "push_targets_delivered";
     args = { p_request: requestId };
-    message = { title: String(row.car_code ?? "Car delivered"),
-                body: "Delivered" + (await porterName(String(row.claimed_by ?? ""))) };
+    // porterName() comes back as " by Mark", or empty when the name cannot be
+    // read. Trimmed here so the body is not a leading space, and so a missing
+    // name leaves the line out rather than showing "by".
+    const who = (await porterName(String(row.claimed_by ?? ""))).trim();
+    message = { title: `${String(row.car_code ?? "A car")} Delivered`,
+                body: who || "It has arrived." };
   } else {
+    const requestId = String(row.id ?? "");
+    if (!requestId) {
+      return new Response(JSON.stringify({ skipped: "no id on the row" }), { status: 200 });
+    }
     if (zone !== "510" && zone !== "lower_lot") {
       return new Response(JSON.stringify({ skipped: `unknown zone ${zone}` }), { status: 200 });
     }
     rpc = "push_targets";
-    args = { p_zone: zone };
+    args = { p_request: requestId };
     message = describeRequest(row);
   }
 
