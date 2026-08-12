@@ -2201,25 +2201,29 @@ function locButtons(kind, selected) {
    already made. */
 let schedSub = "new";
 
-function renderSchedule() {
+/* The two sub-tabs, built here and used by both branches — including by
+   renderIssue, which draws the whole New Request screen on its own. They were
+   inserted afterwards once, and then a successful booking re-rendered the form
+   directly and the sub-tabs simply vanished, with the poll held off so nothing
+   put them back. A screen assembled in two places will eventually be drawn in
+   only one of them. */
+function schedSubTabs() {
   const pill = (id, label) =>
     `<button data-schedsub="${id}" aria-current="${schedSub === id}">${esc(label)}</button>`;
+  return `<div class="zonebar">${pill("new", "New Request")}${pill("list", "Scheduled")}</div>`;
+}
+
+function renderSchedule() {
 
   if (schedSub === "new") {
     renderIssue(true);
-    // renderIssue owns the view, so the sub-tabs go in after it, under the
-    // heading it wrote.
-    $("view").insertAdjacentHTML("afterbegin",
-      `<div class="zonebar" id="schedSubs">${pill("new","New Request")}${pill("list","Scheduled")}</div>`);
-    $("view").querySelector("h2.title").after($("schedSubs"));
   } else {
     const mine = byStatus("scheduled")
       .filter(r => r.issued_by === session.user.id)
       .sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for));
 
     $("view").innerHTML =
-      `<h2 class="title">Schedule</h2>
-       <div class="zonebar">${pill("new","New Request")}${pill("list","Scheduled")}</div>` +
+      `<h2 class="title">Schedule</h2>` + schedSubTabs() +
       (mine.length
         ? `<p class="sub">Soonest first. ${mine.length} booked.</p>` +
           mine.map(r => card(r, { time: schedStamp(r.scheduled_for), sched: true })).join("")
@@ -2227,10 +2231,14 @@ function renderSchedule() {
                 "Bookings you make will wait here until their time."));
   }
 
-  $("view").querySelectorAll("[data-schedsub]").forEach(b =>
-    b.onclick = () => { schedSub = b.dataset.schedsub; render(); });
+  bindSchedSubTabs();
   $("view").querySelectorAll(".card").forEach(c =>
     c.onclick = () => openDetail(c.dataset.id));
+}
+
+function bindSchedSubTabs() {
+  $("view").querySelectorAll("[data-schedsub]").forEach(b =>
+    b.onclick = () => { schedSub = b.dataset.schedsub; render(); });
 }
 
 /* --- Bookings, as a porter sees them ---------------------------------------
@@ -2426,6 +2434,7 @@ function renderIssue(scheduled = false) {
 
   $("view").innerHTML = `
     <h2 class="title">${scheduled ? "Schedule a Request" : "Issue a Request"}</h2>
+    ${scheduled ? schedSubTabs() : ""}
 
     <label for="car_code">Key tag</label>
     <input id="car_code" type="text" autocomplete="off" autocapitalize="characters"
@@ -2513,7 +2522,10 @@ function renderIssue(scheduled = false) {
   $("viaWash").onchange = (e) => { issueWash = e.target.checked; paint(); };
   $("car_code").addEventListener("input", paint);
   $("submitReq").onclick = () => submitRequest(scheduled);
-  if (scheduled) bindSchedulePicker();
+  if (scheduled) {
+    bindSchedulePicker();
+    bindSchedSubTabs();
+  }
 
   paint();
 
