@@ -165,6 +165,30 @@ const LOCATION_LABEL: Record<string, string> = {
   drive: "Drive", wash: "Wash", lower_lot: "Lower Lot",
 };
 
+// The dealership's clock, not the server's. This runs in UTC; a 4pm booking has
+// to read "4:00 PM" to the person who made it.
+const TZ = "America/Los_Angeles";
+
+function localTime(iso: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, hour: "numeric", minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+// "4:00 PM", or "Aug 14, 4:00 PM" when it is not today. Same-day is the common
+// case by a distance, and a date on every one of those is noise that pushes the
+// tag off the end of a lock screen.
+function whenLabel(iso: string) {
+  const dayOf = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: TZ, dateStyle: "short" }).format(d);
+  const when = new Date(iso);
+  if (dayOf(when) === dayOf(new Date())) return localTime(iso);
+  const date = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, month: "short", day: "numeric",
+  }).format(when);
+  return `${date}, ${localTime(iso)}`;
+}
+
 function describeRequest(row: Record<string, unknown>) {
   const stop = (s: unknown) => LOCATION_LABEL[String(s)] ?? String(s ?? "?");
   const legs = [stop(row.origin)];
@@ -216,6 +240,8 @@ Deno.serve(async (req) => {
   // Three things get announced, to three different audiences.
   //
   //   requested  a car is waiting — goes to whoever asked for that area
+  //   scheduled  a car has been booked for later — same audience, own setting
+  //   reminder   a booking somebody took is due now — only to that person
   //   delivered  it has arrived   — the cashier who asked, and the advisor
   //                                 whose key character is on the tag
   //   message    somebody said something — depends on each person's setting,
@@ -244,6 +270,30 @@ Deno.serve(async (req) => {
       // somebody's own words, and trimming them to ASCII would mangle what
       // they actually said.
       body: String(row.body ?? ""),
+    };
+  } else if (event === "scheduled") {
+    const requestId = String(row.id ?? "");
+    const at = String(row.scheduled_for ?? "");
+    if (!requestId || !at) {
+      return new Response(JSON.stringify({ skipped: "no id or time on the booking" }),
+                          { status: 200 });
+    }
+    rpc = "push_targets_scheduled";
+    args = { p_request: requestId };
+    message = {
+      title: `Scheduled Request for ${whenLabel(at)}: ${String(row.car_code ?? "a car")}`,
+      body: describeRequest(row).body,
+    };
+  } else if (event === "reminder") {
+    const requestId = String(row.id ?? "");
+    if (!requestId) {
+      return new Response(JSON.stringify({ skipped: "no id on the row" }), { status: 200 });
+    }
+    rpc = "push_targets_reminder";
+    args = { p_request: requestId };
+    message = {
+      title: `Reminder: ${String(row.car_code ?? "a car")} Scheduled for Now`,
+      body: describeRequest(row).body,
     };
   } else if (event === "delivered") {
     const requestId = String(row.id ?? "");

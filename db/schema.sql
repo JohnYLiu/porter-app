@@ -136,6 +136,18 @@ create table if not exists public.users (
   notify_advisor_delivered boolean not null default false,
   notify_advisor_messages  boolean not null default false,
 
+  -- A request has been booked for later, in this area.
+  notify_sched_510   boolean not null default false,
+  notify_sched_lower boolean not null default false,
+
+  -- The one that defaults ON: a car you agreed to take is due now. Everything
+  -- else here is somebody else's news you opted into; this is your own
+  -- commitment coming round, and silently forgetting it is the failure the
+  -- whole feature exists to prevent.
+  notify_reminder    boolean not null default true,
+
+  notify_advisor_scheduled boolean not null default false,
+
   -- Admin is John, and is not one of the checkboxes. Adding and editing users
   -- is admin-only; managers cannot promote themselves.
   is_admin    boolean     not null default false,
@@ -231,7 +243,21 @@ create table if not exists public.requests (
   note         text        check (note is null or length(note) <= 500),
 
   status       text        not null default 'unclaimed'
-                           check (status in ('unclaimed', 'claimed', 'complete', 'cancelled')),
+                           check (status in ('scheduled', 'unclaimed', 'claimed',
+                                             'complete', 'cancelled')),
+
+  -- When a scheduled request is due. Null on every ordinary request.
+  --
+  -- A scheduled request is a real request from the moment it is made — same
+  -- table, same advisor derivation, same zone, same messages, same history. The
+  -- only thing different about it is that it is not on the queue yet. Modelling
+  -- it as another status rather than another table means none of that machinery
+  -- had to learn about it.
+  --
+  -- It can be claimed while still scheduled: claimed_by fills in and the status
+  -- stays 'scheduled' until the time comes. promote_due_requests() below is
+  -- what moves it on.
+  scheduled_for timestamptz,
 
   issued_by    uuid        not null references public.users(id),
   created_at   timestamptz not null default now(),
@@ -289,7 +315,9 @@ create table if not exists public.requests (
   constraint complete_has_completion
     check (status <> 'complete' or (claimed_by is not null and completed_at is not null)),
   constraint cancelled_has_cancellation
-    check (status <> 'cancelled' or cancelled_at is not null)
+    check (status <> 'cancelled' or cancelled_at is not null),
+  constraint scheduled_has_a_time
+    check (status <> 'scheduled' or scheduled_for is not null)
 );
 
 -- The unclaimed queue, oldest first — the single hottest query in the app.
@@ -521,6 +549,24 @@ alter table public.users add  constraint users_notify_messages_check
   check (notify_messages in ('none', 'mine', 'all'));
 alter table public.users add column if not exists notify_advisor_delivered boolean not null default false;
 alter table public.users add column if not exists notify_advisor_messages  boolean not null default false;
+
+-- Scheduling.
+alter table public.requests add column if not exists scheduled_for timestamptz;
+alter table public.requests drop constraint if exists requests_status_check;
+alter table public.requests add  constraint requests_status_check
+  check (status in ('scheduled', 'unclaimed', 'claimed', 'complete', 'cancelled'));
+alter table public.requests drop constraint if exists scheduled_has_a_time;
+alter table public.requests add  constraint scheduled_has_a_time
+  check (status <> 'scheduled' or scheduled_for is not null);
+
+-- The queue reads "everything due"; this is the index that answers it.
+create index if not exists requests_scheduled_idx
+  on public.requests (scheduled_for) where status = 'scheduled';
+
+alter table public.users add column if not exists notify_sched_510   boolean not null default false;
+alter table public.users add column if not exists notify_sched_lower boolean not null default false;
+alter table public.users add column if not exists notify_reminder    boolean not null default true;
+alter table public.users add column if not exists notify_advisor_scheduled boolean not null default false;
 
 -- Seed each person's preferences from what they were already getting, once.
 -- Guarded on "nobody has any set yet" so it cannot overwrite a real choice on a
@@ -756,12 +802,15 @@ $$;
 drop function if exists public.create_request(text, text, uuid, text);
 drop function if exists public.create_request(text, text, text, text, boolean);
 
+drop function if exists public.create_request(text, text, text, text, boolean);
 create or replace function public.create_request(
   p_car_code    text,
   p_origin      text,
   p_destination text,
   p_note        text default null,
-  p_via_wash    boolean default false
+  p_via_wash    boolean default false,
+  -- Null means now, which is every ordinary request.
+  p_scheduled_for timestamptz default null
 )
 returns public.requests
 language plpgsql security definer set search_path = '' as $$
@@ -780,11 +829,21 @@ begin
     p_via_wash := false;
   end if;
 
+  -- A time already past is not scheduling, it is asking for the car now. Treat
+  -- it as an ordinary request rather than creating something that would be
+  -- promoted a second later — a cashier who books 2pm at 2:01pm meant now.
+  if p_scheduled_for is not null and p_scheduled_for <= now() then
+    p_scheduled_for := null;
+  end if;
+
   insert into public.requests
-    (car_code, origin, destination, via_wash, advisor_id, note, issued_by)
+    (car_code, origin, destination, via_wash, advisor_id, note, issued_by,
+     status, scheduled_for)
   values (upper(trim(p_car_code)), p_origin, p_destination, coalesce(p_via_wash, false),
           public.advisor_for_code(p_car_code),
-          nullif(trim(coalesce(p_note, '')), ''), v_uid)
+          nullif(trim(coalesce(p_note, '')), ''), v_uid,
+          case when p_scheduled_for is null then 'unclaimed' else 'scheduled' end,
+          p_scheduled_for)
   returning * into v_row;
 
   insert into public.request_events (request_id, event, actor_id)
@@ -897,10 +956,17 @@ begin
     raise exception 'That car is not in your area' using errcode = '42501';
   end if;
 
+  -- A scheduled request can be taken early, and doing so does NOT put it on the
+  -- queue: it stays 'scheduled' with a claimer against it until its time comes,
+  -- and promote_due_requests() turns it into a claimed job then. Taking one is
+  -- a promise to be there, not a job starting now.
   update public.requests
-     set status = 'claimed', claimed_by = v_uid, claimed_at = now()
+     set claimed_by = v_uid,
+         claimed_at = now(),
+         status     = case when status = 'scheduled' then 'scheduled' else 'claimed' end
    where id = p_id
-     and status = 'unclaimed'
+     and status in ('unclaimed', 'scheduled')
+     and claimed_by is null
   returning * into v_row;
 
   if not found then
@@ -935,7 +1001,11 @@ begin
   if not found then
     raise exception 'No such request' using errcode = '22023';
   end if;
-  if v_row.status <> 'claimed' then
+  -- A scheduled request that somebody took early counts as claimed for this
+  -- purpose: they can hand it back, and it goes back to being merely scheduled
+  -- rather than onto the queue.
+  if not (v_row.status = 'claimed'
+          or (v_row.status = 'scheduled' and v_row.claimed_by is not null)) then
     raise exception 'That request is not currently claimed' using errcode = 'PT409';
   end if;
   if not (v_row.claimed_by = v_uid or public.app_is_manager()) then
@@ -946,7 +1016,9 @@ begin
   -- created_at is untouched, so the request returns to its rightful place near
   -- the top of the queue instead of going to the back of the line.
   update public.requests
-     set status = 'unclaimed', claimed_by = null, claimed_at = null
+     set status     = case when status = 'scheduled' then 'scheduled' else 'unclaimed' end,
+         claimed_by = null,
+         claimed_at = null
    where id = p_id
   returning * into v_row;
 
@@ -1087,9 +1159,13 @@ $$;
 -- everybody is_admin. This writes exactly three columns, always for the caller,
 -- and cannot touch anything else.
 drop function if exists public.set_notification_preferences(boolean, boolean, boolean);
+drop function if exists public.set_notification_preferences(
+  boolean, boolean, boolean, text, boolean, boolean);
 create or replace function public.set_notification_preferences(
   p_510 boolean, p_lower boolean, p_delivered boolean,
-  p_messages text, p_advisor_delivered boolean, p_advisor_messages boolean)
+  p_messages text, p_advisor_delivered boolean, p_advisor_messages boolean,
+  p_sched_510 boolean, p_sched_lower boolean, p_reminder boolean,
+  p_advisor_scheduled boolean)
 returns void
 language sql security definer set search_path = '' as $$
   update public.users
@@ -1101,7 +1177,11 @@ language sql security definer set search_path = '' as $$
          notify_messages  = case when p_messages in ('none','mine','all')
                                  then p_messages else 'none' end,
          notify_advisor_delivered = coalesce(p_advisor_delivered, false),
-         notify_advisor_messages  = coalesce(p_advisor_messages, false)
+         notify_advisor_messages  = coalesce(p_advisor_messages, false),
+         notify_sched_510   = coalesce(p_sched_510, false),
+         notify_sched_lower = coalesce(p_sched_lower, false),
+         notify_reminder    = coalesce(p_reminder, false),
+         notify_advisor_scheduled = coalesce(p_advisor_scheduled, false)
    where id = auth.uid() and active;
 $$;
 
@@ -1268,7 +1348,78 @@ drop function if exists public.debug_notify_now();
 drop trigger if exists notify_on_request on public.requests;
 create trigger notify_on_request
   after insert on public.requests
-  for each row execute function public.notify_new_request();
+  -- Not for a booking. A scheduled request announces itself as a booking (the
+  -- trigger below), and announces itself again as a waiting car when its time
+  -- comes. Without this condition it did both at once, hours early.
+  for each row when (new.status = 'unclaimed')
+  execute function public.notify_new_request();
+
+
+-- --- a request has been booked for later -----------------------------------
+create or replace function public.notify_scheduled_request()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare v_secret text;
+begin
+  select value into v_secret from public.app_secrets where key = 'notify_secret';
+  if v_secret is null then return new; end if;
+
+  perform net.http_post(
+    url     := public.notify_url(),
+    body    := jsonb_build_object('record', to_jsonb(new), 'event', 'scheduled'),
+    headers := jsonb_build_object('Content-Type', 'application/json',
+                                  'x-notify-secret', v_secret));
+  return new;
+exception when others then
+  raise warning 'notify_scheduled_request failed: %', sqlerrm;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_on_scheduled on public.requests;
+create trigger notify_on_scheduled
+  after insert on public.requests
+  for each row when (new.status = 'scheduled')
+  execute function public.notify_scheduled_request();
+
+
+-- --- a booking somebody took has come due ----------------------------------
+--
+-- Only for the person who took it. The unclaimed case needs no trigger of its
+-- own: promote_due_requests turns those into ordinary unclaimed rows, and the
+-- promotion trigger below announces them exactly as if they had just been
+-- raised, which from the queue's point of view they have.
+create or replace function public.notify_promoted_request()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare v_secret text;
+begin
+  select value into v_secret from public.app_secrets where key = 'notify_secret';
+  if v_secret is null then return new; end if;
+
+  perform net.http_post(
+    url     := public.notify_url(),
+    body    := jsonb_build_object(
+                 'record', to_jsonb(new),
+                 'event',  case when new.status = 'claimed' then 'reminder'
+                                else 'requested' end),
+    headers := jsonb_build_object('Content-Type', 'application/json',
+                                  'x-notify-secret', v_secret));
+  return new;
+exception when others then
+  raise warning 'notify_promoted_request failed: %', sqlerrm;
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_on_promote on public.requests;
+create trigger notify_on_promote
+  after update on public.requests
+  for each row
+  when (old.status = 'scheduled' and new.status in ('unclaimed', 'claimed'))
+  execute function public.notify_promoted_request();
 
 
 -- --- and when the car actually arrives -------------------------------------
@@ -1445,6 +1596,46 @@ end;
 $$;
 
 
+-- Who hears that a car has been booked for later.
+--
+-- Same shape as push_targets: the area decides, the issuer is left out, and an
+-- advisor hears about their own customers' cars whoever booked them.
+create or replace function public.push_targets_scheduled(p_request uuid)
+returns table(endpoint text, p256dh text, auth text)
+language sql stable security definer set search_path = '' as $$
+  select ps.endpoint, ps.p256dh, ps.auth
+    from public.push_subscriptions ps
+    join public.users u on u.id = ps.user_id
+    join public.requests r on r.id = p_request
+    left join public.service_advisors sa on sa.user_id = u.id
+   where u.active
+     and ps.user_id is distinct from r.issued_by
+     and (
+          case when r.zone = '510' then u.notify_sched_510 else u.notify_sched_lower end
+       or (u.notify_advisor_scheduled and sa.id is not null and sa.id = r.advisor_id)
+     )
+     and ps.claimed_at >= public.app_day_start();
+$$;
+
+
+-- Who hears that a booking they took is due now.
+--
+-- Exactly one person: whoever took it. This is not news about the queue, it is
+-- somebody's own commitment coming round.
+create or replace function public.push_targets_reminder(p_request uuid)
+returns table(endpoint text, p256dh text, auth text)
+language sql stable security definer set search_path = '' as $$
+  select ps.endpoint, ps.p256dh, ps.auth
+    from public.push_subscriptions ps
+    join public.users u on u.id = ps.user_id
+    join public.requests r on r.id = p_request
+   where u.active
+     and u.notify_reminder
+     and ps.user_id = r.claimed_by
+     and ps.claimed_at >= public.app_day_start();
+$$;
+
+
 -- Who hears about a message on a car.
 --
 -- Never the person who wrote it. Being buzzed by your own sentence is the
@@ -1470,6 +1661,34 @@ language sql stable security definer set search_path = '' as $$
        or (u.notify_advisor_messages and sa.id is not null and sa.id = r.advisor_id)
      )
      and ps.claimed_at >= public.app_day_start();
+$$;
+
+
+-- Everything whose time has come.
+--
+-- There is no scheduler here. Every signed-in app polls the queue every three
+-- seconds and calls this first, so the promotion happens within seconds of the
+-- minute regardless of who is looking — and if nobody is looking, nothing was
+-- going to be read anyway. The first caller does the work and the rest find
+-- nothing to do.
+--
+-- Idempotent by construction: the WHERE clause only matches rows still sitting
+-- in the past, so a second caller a millisecond later updates nothing. Safe to
+-- call from anywhere, by anyone, as often as they like.
+--
+-- Unclaimed ones join the queue. Ones somebody already took become that
+-- person's job. The triggers on this table turn both into the right
+-- notification.
+create or replace function public.promote_due_requests()
+returns integer
+language sql security definer set search_path = '' as $$
+  with promoted as (
+    update public.requests
+       set status = case when claimed_by is null then 'unclaimed' else 'claimed' end
+     where status = 'scheduled'
+       and scheduled_for <= now()
+    returning 1)
+  select count(*)::integer from promoted;
 $$;
 
 
@@ -1686,7 +1905,8 @@ grant execute on function public.app_can_claim()            to authenticated;
 grant execute on function public.app_can_claim_zone(text)   to authenticated;
 grant execute on function public.app_is_manager()           to authenticated;
 grant execute on function public.set_notification_preferences(
-  boolean, boolean, boolean, text, boolean, boolean) to authenticated;
+  boolean, boolean, boolean, text, boolean, boolean,
+  boolean, boolean, boolean, boolean) to authenticated;
 
 -- --- Tables: nothing at all for logged-out callers --------------------------
 --
@@ -1736,7 +1956,7 @@ revoke insert, delete         on public.users          from authenticated;
 
 -- Operations: logged-in users may call them; the functions themselves decide
 -- whether the caller is allowed to do the thing.
-revoke all on function public.create_request(text, text, text, text, boolean)          from public, anon;
+revoke all on function public.create_request(text, text, text, text, boolean, timestamptz) from public, anon;
 revoke all on function public.edit_request(uuid, text, text, text, text, boolean)      from public, anon;
 revoke all on function public.claim_request(uuid)                             from public, anon;
 revoke all on function public.unclaim_request(uuid)                           from public, anon;
@@ -1745,7 +1965,9 @@ revoke all on function public.reopen_request(uuid)                            fr
 revoke all on function public.cancel_request(uuid)                            from public, anon;
 revoke all on function public.post_message(uuid, text)                        from public, anon;
 
-grant execute on function public.create_request(text, text, text, text, boolean)       to authenticated;
+grant execute on function public.create_request(text, text, text, text, boolean, timestamptz) to authenticated;
+revoke all    on function public.promote_due_requests()                       from public, anon;
+grant execute on function public.promote_due_requests()                         to authenticated;
 grant execute on function public.edit_request(uuid, text, text, text, text, boolean)   to authenticated;
 grant execute on function public.claim_request(uuid)                          to authenticated;
 grant execute on function public.unclaim_request(uuid)                        to authenticated;
@@ -1770,6 +1992,8 @@ revoke all on function public.set_login_code(uuid, text)   from public, anon, au
 grant execute on function public.push_targets(uuid)                to service_role;
 grant execute on function public.push_targets_delivered(uuid)      to service_role;
 grant execute on function public.push_targets_message(uuid, uuid) to service_role;
+grant execute on function public.push_targets_scheduled(uuid)     to service_role;
+grant execute on function public.push_targets_reminder(uuid)      to service_role;
 grant execute on function public.forget_push_endpoint(text) to service_role;
 grant execute on function public.verify_login_code(text)    to service_role;
 grant execute on function public.set_login_code(uuid, text) to service_role;

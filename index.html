@@ -337,6 +337,77 @@ nav.herobar .hero .badge {
   font-size: .66rem; line-height: 1.7; word-break: break-word;
 }
 
+/* --- Scheduling ------------------------------------------------------------ */
+.clockico { width: 1.05em; height: 1.05em; vertical-align: -.16em;
+            fill: none; stroke: currentColor; stroke-width: 2;
+            stroke-linecap: round; stroke-linejoin: round; }
+nav button .clockico { width: 1.15rem; height: 1.15rem; vertical-align: 0; }
+.empty .clockico { width: 34px; height: 34px; stroke-width: 1.6; }
+
+/* The areas give up a fixed square at the end rather than a share of the row,
+   so the clock is the same size whatever else is in the bar. */
+.zonebar.hasclock { grid-template-columns: none; }
+.clockbtn { flex: none !important; width: 46px; padding: 0; }
+
+/* The time is the whole point of a scheduled card, so it is not small print. */
+.card .age.sched { color: var(--text); font-size: .84rem; font-weight: 600; }
+
+.schedhead { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.backbtn { width: 38px; min-height: 38px; border-radius: 9px; font-size: 1.4rem;
+           line-height: 1; background: var(--surface-2); color: var(--text);
+           border: 1px solid var(--line); flex: none; }
+
+/* What happens next, said once, where the porter is looking when they wonder. */
+.msg.pinned { background: #16233a; color: var(--loc-510); font-weight: 600;
+              margin-bottom: 12px; }
+
+.sched { display: flex; gap: 8px; align-items: flex-start; }
+.schedday { position: relative; flex: 1 1 46%; min-width: 0; }
+.schedday > button {
+  width: 100%; min-height: var(--tap); padding: 0 12px; border-radius: 11px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--text);
+  font-size: 1rem; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+}
+.schedday .caret { color: var(--dimmer); font-size: .8rem; }
+
+.schedtime { flex: 1 1 54%; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.schedtime input {
+  width: 3.2rem; min-height: var(--tap); text-align: center; padding: 0;
+  /* 1rem, not smaller — anything under 16px makes iOS zoom the page in. */
+  font-size: 1rem;
+}
+.schedtime .colon { color: var(--dimmer); }
+.seg.ampm { display: flex; flex-direction: column; gap: 3px; margin-left: 4px; }
+.seg.ampm button { min-height: 24px; padding: 0 9px; font-size: .74rem; border-radius: 7px; }
+
+/* Opens over the form rather than pushing it down, so the fields below do not
+   jump about while somebody is picking a day. */
+.cal {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+  width: min(300px, 86vw);
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.55);
+}
+.cal[hidden] { display: none; }
+.calhead { display: flex; align-items: center; justify-content: space-between;
+           margin-bottom: 8px; font-weight: 650; }
+.calhead button { width: 32px; min-height: 32px; border-radius: 8px;
+                  background: var(--surface); border: 1px solid var(--line);
+                  color: var(--text); font-size: 1.1rem; line-height: 1; }
+.calhead button:disabled { opacity: .3; }
+.caldow, .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.caldow span { text-align: center; font-size: .68rem; color: var(--dimmer);
+               padding-bottom: 4px; }
+.calgrid button {
+  min-height: 36px; border-radius: 8px; font-size: .88rem;
+  background: none; color: var(--text); border: 1px solid transparent;
+}
+.calgrid button:disabled { color: var(--dimmer); opacity: .35; }
+.calgrid button[aria-current="true"] {
+  background: var(--silver); color: var(--bg); font-weight: 700;
+}
+
 /* --- Talking about a car ---------------------------------------------------
    Shown only where there is something to show: a car nobody has said anything
    about looks exactly as it did before. */
@@ -1059,6 +1130,32 @@ function clock(iso) {
    elapsed time is what tells you whether a car has been sitting too long. */
 const stamp = (iso) => `${clock(iso)} · ${ago(iso)}`;
 
+/* How far off a booking is, in the words somebody would use out loud.
+   Counts UP once it is late, which happens for a few seconds between the time
+   passing and some app noticing — better than "in -1 minutes". */
+function untilLabel(iso) {
+  const mins = Math.round((new Date(iso) - Date.now()) / 60000);
+  if (mins <= 0)  return "due now";
+  if (mins < 60)  return `in ${mins} min`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `in ${h}h${m ? " " + m + "m" : ""}`;
+}
+
+/* "Scheduled for 4:00 PM · in 25 min", with the day only when it is not today.
+   The date is noise on the same-day bookings that make up nearly all of them. */
+function schedStamp(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return `Scheduled for ${sameDay ? clock(iso) : dayAndClock(iso)} · ${untilLabel(iso)}`;
+}
+
+/* A clock, drawn rather than typed.
+   Every character that looks like a clock is either already used by the Active
+   tab or is an emoji that iOS would render in colour — the gear taught that
+   lesson. An inline SVG is monochrome everywhere and follows the text colour. */
+const CLOCK_ICON = `<svg class="clockico" viewBox="0 0 24 24" aria-hidden="true">
+  <circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.4 2"/></svg>`;
+
 function dayAndClock(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + clock(iso);
@@ -1220,8 +1317,15 @@ async function loadRequests() {
     // in a week, the newest ones silently stop arriving and the queue quietly
     // goes stale. Ordering descending keeps the newest, which is what a limit
     // is for.
+    // Anything whose time has come, first. There is no scheduler — every app
+    // that is awake does this on its way to reading the queue, so a booking
+    // lands within seconds of its minute, and if nobody is awake then nobody
+    // was going to read it anyway. Idempotent, so all the callers racing is
+    // fine: the first one does the work.
+    await api("/rest/v1/rpc/promote_due_requests", { method: "POST" }).catch(() => {});
+
     const rows = await api(`/rest/v1/requests?select=${SELECT}` +
-      `&or=(status.in.(unclaimed,claimed),created_at.gte.${since})` +
+      `&or=(status.in.(scheduled,unclaimed,claimed),created_at.gte.${since})` +
       `&order=created_at.desc&limit=500`);
     // The queue renders in array order and must be oldest first.
     requests = rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -1561,6 +1665,9 @@ function tabsFor() {
   const t = [{ id: "queue", label: "Queue", ico: "☰" }];
   t.push({ id: "progress", label: "Active", ico: "◷" });
   if (canIssue()) t.push({ id: "issue", label: "Issue", ico: "＋" });
+  // Booking a car is a cashier's job, so the tab is theirs. Porters reach the
+  // same bookings from the clock on the Queue, where they are already looking.
+  if (canIssue()) t.push({ id: "schedule", label: "Schedule", ico: CLOCK_ICON });
   t.push({ id: "history", label: "History", ico: "⟲" });
   // Settings is not here any more — it lives in the menu, with the other things
   // you touch once a week rather than once a minute.
@@ -1574,7 +1681,7 @@ function renderTabs() {
   // Admin and Settings are reached from the menu, not the bar, so they are
   // legitimately absent from this list — don't bounce back to the queue while
   // one of them is showing.
-  const offBar = tab === "admin" || tab === "settings";
+  const offBar = tab === "admin" || tab === "settings" || tab === "queuesched";
   if (!offBar && !list.some(t => t.id === tab)) tab = list[0].id;
 
   // The queue badge counts every area this person can see, not just the sub-tab
@@ -1613,7 +1720,7 @@ const heroTab = () => porterBar() ? "queue" : "issue";
    one or two tabs beside it. */
 function heroTabs(list, waiting, heroId) {
   const hero  = list.find(t => t.id === heroId);
-  const right = list.filter(t => t.id === "history" || t.id === "settings");
+  const right = list.filter(t => t.id === "schedule" || t.id === "history");
   const left  = list.filter(t => t.id !== heroId && !right.includes(t));
 
   return `<div class="side">${left.map(t => tabBtn(t, waiting)).join("")}</div>` +
@@ -1651,7 +1758,7 @@ function card(r, opts = {}) {
       <div class="row1">
         <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
         ${n ? `<span class="msgcount">${n} message${n > 1 ? "s" : ""}</span>` : ""}
-        <span class="age">${esc(opts.time || stamp(r.created_at))}</span>
+        <span class="age${opts.sched ? " sched" : ""}">${esc(opts.time || stamp(r.created_at))}</span>
       </div>
       <div class="mid">
         <div class="code">${esc(r.car_code)}</div>
@@ -1689,14 +1796,18 @@ function swipeWrap(inner, label, action) {
 /* The area sub-tabs above the Queue and In Progress lists.
    Drawn only when there is a choice to make — a porter who works one area gets
    no switcher, because there is nothing to switch to. */
-function zoneBar(counts) {
+function zoneBar(counts, withClock = false) {
   const zones = visibleZones();
-  if (zones.length < 2) return "";
+  if (zones.length < 2 && !withClock) return "";
   if (!zones.some(z => z.id === zone)) zone = zones[0].id;
-  return `<div class="zonebar">` + zones.map(z =>
+  // The clock is a fixed square on the end; the areas share what is left.
+  return `<div class="zonebar${withClock ? " hasclock" : ""}">` + zones.map(z =>
     `<button data-zone="${z.id}" aria-current="${z.id === zone}">${esc(z.label)}` +
     (counts[z.id] ? `<span class="n">${counts[z.id]}</span>` : "") +
-    `</button>`).join("") + `</div>`;
+    `</button>`).join("") +
+    (withClock ? `<button class="clockbtn" id="toSched"
+                    aria-label="Scheduled requests">${CLOCK_ICON}</button>` : "") +
+    `</div>`;
 }
 
 // Requests in the area currently being viewed. A porter with one area sees
@@ -2009,13 +2120,14 @@ function render() {
 
     v.innerHTML =
       myCarPanels(mine) +
-      `<h2 class="title">Unclaimed</h2>` + pushCard() + zoneBar(counts) +
+      `<h2 class="title">Unclaimed</h2>` + pushCard() + zoneBar(counts, true) +
       (open.length
         ? `<p class="sub">Oldest first. ${open.length} waiting.</p>` +
           open.map(r => canClaim() ? swipeWrap(card(r), "Claim", "claim") : card(r)).join("")
         : empty("✓", "Nothing waiting", "Every car in this area has been picked up."));
 
     bindZoneBar();
+    if ($("toSched")) $("toSched").onclick = () => { tab = "queuesched"; render(); };
     bindSwipes();          // first: its click suppressor has to run before the
     bindMyCarPanels();     // panel handler it is there to cancel
     if ($("enablePush")) $("enablePush").onclick = enablePush;
@@ -2057,6 +2169,8 @@ function render() {
   }
 
   else if (tab === "issue") renderIssue();
+  else if (tab === "schedule") renderSchedule();
+  else if (tab === "queuesched") renderQueueScheduled();
   else if (tab === "history") renderHistory();
   else if (tab === "settings") renderSettings();
   else if (tab === "admin")   renderAdmin();
@@ -2082,17 +2196,243 @@ function locButtons(kind, selected) {
     `${esc(l.label)}</button>`).join("");
 }
 
-function renderIssue() {
+/* --- The Schedule tab ------------------------------------------------------
+   Two things a cashier does with bookings: make one, and check the ones they
+   already made. */
+let schedSub = "new";
+
+function renderSchedule() {
+  const pill = (id, label) =>
+    `<button data-schedsub="${id}" aria-current="${schedSub === id}">${esc(label)}</button>`;
+
+  if (schedSub === "new") {
+    renderIssue(true);
+    // renderIssue owns the view, so the sub-tabs go in after it, under the
+    // heading it wrote.
+    $("view").insertAdjacentHTML("afterbegin",
+      `<div class="zonebar" id="schedSubs">${pill("new","New Request")}${pill("list","Scheduled")}</div>`);
+    $("view").querySelector("h2.title").after($("schedSubs"));
+  } else {
+    const mine = byStatus("scheduled")
+      .filter(r => r.issued_by === session.user.id)
+      .sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for));
+
+    $("view").innerHTML =
+      `<h2 class="title">Schedule</h2>
+       <div class="zonebar">${pill("new","New Request")}${pill("list","Scheduled")}</div>` +
+      (mine.length
+        ? `<p class="sub">Soonest first. ${mine.length} booked.</p>` +
+          mine.map(r => card(r, { time: schedStamp(r.scheduled_for), sched: true })).join("")
+        : empty(CLOCK_ICON, "Nothing scheduled",
+                "Bookings you make will wait here until their time."));
+  }
+
+  $("view").querySelectorAll("[data-schedsub]").forEach(b =>
+    b.onclick = () => { schedSub = b.dataset.schedsub; render(); });
+  $("view").querySelectorAll(".card").forEach(c =>
+    c.onclick = () => openDetail(c.dataset.id));
+}
+
+/* --- Bookings, as a porter sees them ---------------------------------------
+   Reached from the clock on the Queue. Same areas as the queue itself, because
+   a porter is looking for their own patch. */
+function renderQueueScheduled() {
+  const all  = byStatus("scheduled");
+  const mine = all.filter(r => r.claimed_by === session.user.id);
+  const open = inZone(all.filter(r => r.claimed_by !== session.user.id));
+  const counts = Object.fromEntries(
+    ZONES.map(z => [z.id, all.filter(r => r.zone === z.id && r.claimed_by !== session.user.id).length]));
+
+  $("view").innerHTML =
+    `<div class="schedhead">
+       <button class="backbtn" id="schedBack" aria-label="Back to the queue">&#8249;</button>
+       <h2 class="title" style="margin:0">Scheduled</h2>
+     </div>` +
+    (mine.length
+      ? `<div class="msg pinned">The scheduled request you have claimed will
+           automatically show up under “Your car” in the Queue menu at the
+           scheduled time.</div>` +
+        mine.sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+            .map(r => swipeWrap(card(r, { time: schedStamp(r.scheduled_for), sched: true }),
+                                null, null)).join("")
+      : "") +
+    zoneBar(counts) +
+    (open.length
+      ? open.sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+            .map(r => swipeWrap(card(r, { time: schedStamp(r.scheduled_for), sched: true }),
+                                "Claim", "claim")).join("")
+      : empty(CLOCK_ICON, "Nothing scheduled here",
+              "Bookings for this area will appear as they are made."));
+
+  $("schedBack").onclick = () => { tab = "queue"; render(); };
+  bindZoneBar();
+  bindSwipes();
+}
+
+/* --- Picking a day and a time ----------------------------------------------
+   State lives out here so repainting the form does not reset a half-made
+   choice, the same reason issueOrigin and issueDest do. */
+let schedDay = null;        // Date at midnight; null means today
+let schedCalOpen = false;
+let schedCalMonth = null;   // which month the calendar is showing
+
+const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const sameDate = (a, b) => a && b && midnight(a).getTime() === midnight(b).getTime();
+
+/* The chosen day, in words. Today by default, because nearly every booking is
+   for today and making that the answer saves opening the calendar at all. */
+function schedDayLabel() {
+  const d = schedDay || new Date();
+  const today = new Date();
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  if (sameDate(d, today))    return "Today";
+  if (sameDate(d, tomorrow)) return "Tomorrow";
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+/* A month, drawn from the calendar rather than from a stored table.
+   Generating them ahead of time was an option; there is nothing to gain from
+   it — the arithmetic is a few lines and it can never disagree with the real
+   calendar, which a pre-generated table eventually would. */
+function calendarGrid(month) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const days  = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const today = midnight(new Date());
+  const chosen = midnight(schedDay || new Date());
+
+  let cells = "";
+  for (let i = 0; i < first.getDay(); i++) cells += `<span></span>`;
+  for (let n = 1; n <= days; n++) {
+    const d = new Date(month.getFullYear(), month.getMonth(), n);
+    const past = d < today;
+    cells += `<button type="button" data-day="${d.toISOString()}"
+      ${past ? "disabled" : ""}
+      aria-current="${d.getTime() === chosen.getTime()}">${n}</button>`;
+  }
+
+  // Never backwards past this month: a car cannot be fetched last Tuesday.
+  const atStart = month.getFullYear() === today.getFullYear()
+               && month.getMonth() === today.getMonth();
+  return `
+    <div class="calhead">
+      <button type="button" id="calPrev" ${atStart ? "disabled" : ""} aria-label="Previous month">&#8249;</button>
+      <span>${month.toLocaleDateString([], { month: "long", year: "numeric" })}</span>
+      <button type="button" id="calNext" aria-label="Next month">&#8250;</button>
+    </div>
+    <div class="caldow">${["S","M","T","W","T","F","S"].map(d => `<span>${d}</span>`).join("")}</div>
+    <div class="calgrid">${cells}</div>`;
+}
+
+function schedulePicker() {
+  const now = new Date();
+  const h = now.getHours();
+  return `
+    <label>When</label>
+    <div class="sched">
+      <div class="schedday">
+        <button type="button" id="schedDayBtn" aria-expanded="${schedCalOpen}">
+          <span>${esc(schedDayLabel())}</span><span class="caret">&#9662;</span>
+        </button>
+        <div id="schedCal" class="cal" ${schedCalOpen ? "" : "hidden"}>
+          ${calendarGrid(schedCalMonth || midnight(schedDay || now))}
+        </div>
+      </div>
+      <div class="schedtime">
+        <input id="schedH" type="text" inputmode="numeric" maxlength="2"
+               placeholder="--" aria-label="Hour" value="${((h % 12) || 12)}">
+        <span class="colon">:</span>
+        <input id="schedM" type="text" inputmode="numeric" maxlength="2"
+               placeholder="00" aria-label="Minute" value="00">
+        <div class="seg ampm">
+          <button type="button" data-mer="AM" aria-pressed="${h < 12}">AM</button>
+          <button type="button" data-mer="PM" aria-pressed="${h >= 12}">PM</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* What the picker currently means, as a real instant. Null if the time is not
+   a time yet — which is what stops a half-typed hour becoming 1am. */
+function scheduledWhen() {
+  const hRaw = parseInt($("schedH").value, 10);
+  const mRaw = $("schedM").value.trim() === "" ? 0 : parseInt($("schedM").value, 10);
+  if (!Number.isInteger(hRaw) || hRaw < 1 || hRaw > 12) return null;
+  if (!Number.isInteger(mRaw) || mRaw < 0 || mRaw > 59) return null;
+
+  const pm = $("view").querySelector('[data-mer="PM"]').getAttribute("aria-pressed") === "true";
+  let h = hRaw % 12;
+  if (pm) h += 12;
+
+  const d = new Date(schedDay || new Date());
+  d.setHours(h, mRaw, 0, 0);
+  return d;
+}
+
+function bindSchedulePicker() {
+  const cal = $("schedCal");
+
+  $("schedDayBtn").onclick = () => {
+    schedCalOpen = !schedCalOpen;
+    schedCalMonth = schedCalMonth || midnight(schedDay || new Date());
+    cal.hidden = !schedCalOpen;
+    $("schedDayBtn").setAttribute("aria-expanded", String(schedCalOpen));
+  };
+
+  // Only the calendar is redrawn, never the form around it — the key tag and
+  // the note are already typed by the time anybody opens this.
+  const repaintCal = () => {
+    cal.innerHTML = calendarGrid(schedCalMonth);
+    bindCalendar();
+  };
+  const bindCalendar = () => {
+    cal.querySelector("#calPrev").onclick = () => {
+      schedCalMonth = new Date(schedCalMonth.getFullYear(), schedCalMonth.getMonth() - 1, 1);
+      repaintCal();
+    };
+    cal.querySelector("#calNext").onclick = () => {
+      schedCalMonth = new Date(schedCalMonth.getFullYear(), schedCalMonth.getMonth() + 1, 1);
+      repaintCal();
+    };
+    cal.querySelectorAll("[data-day]").forEach(b =>
+      b.onclick = () => {
+        schedDay = new Date(b.dataset.day);
+        schedCalOpen = false;
+        cal.hidden = true;
+        $("schedDayBtn").querySelector("span").textContent = schedDayLabel();
+        $("schedDayBtn").setAttribute("aria-expanded", "false");
+      });
+  };
+  bindCalendar();
+
+  $("view").querySelectorAll("[data-mer]").forEach(b =>
+    b.onclick = () => {
+      $("view").querySelectorAll("[data-mer]").forEach(x =>
+        x.setAttribute("aria-pressed", String(x === b)));
+    });
+
+  // Digits only, and no silent truncation to something they did not type.
+  ["schedH", "schedM"].forEach(id =>
+    $(id).addEventListener("input", (e) => {
+      e.target.value = e.target.value.replace(/[^0-9]/g, "").slice(0, 2);
+    }));
+}
+
+/* The one form, in two moods.
+   Scheduling is the same request with a time attached, so it is the same form
+   with a date and a clock in it rather than a second copy that would drift. */
+function renderIssue(scheduled = false) {
   // A wash stop is meaningless if the wash is already an end of the journey.
   const washNA = issueOrigin === "wash" || issueDest === "wash";
 
   $("view").innerHTML = `
-    <h2 class="title">Issue a Request</h2>
+    <h2 class="title">${scheduled ? "Schedule a Request" : "Issue a Request"}</h2>
 
     <label for="car_code">Key tag</label>
     <input id="car_code" type="text" autocomplete="off" autocapitalize="characters"
            spellcheck="false" maxlength="20">
     <div id="tagWho"></div>
+
+    ${scheduled ? schedulePicker() : ""}
 
     <label>Pick up from</label>
     <div class="seg" id="segOrigin">${locButtons("origin", issueOrigin)}</div>
@@ -2112,7 +2452,8 @@ function renderIssue() {
     <label for="note">Note <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
     <textarea id="note" maxlength="500" placeholder="Customer name, bay number…"></textarea>
 
-    <button class="btn primary" id="submitReq">Send to porters</button>
+    <button class="btn primary" id="submitReq">${
+      scheduled ? "Schedule it" : "Send to porters"}</button>
     <div id="issueMsg"></div>`;
 
   // Everything below updates the form IN PLACE. Re-rendering on each tap would
@@ -2171,7 +2512,8 @@ function renderIssue() {
     b.onclick = () => { issueDest = b.dataset.dest; paint(); });
   $("viaWash").onchange = (e) => { issueWash = e.target.checked; paint(); };
   $("car_code").addEventListener("input", paint);
-  $("submitReq").onclick = submitRequest;
+  $("submitReq").onclick = () => submitRequest(scheduled);
+  if (scheduled) bindSchedulePicker();
 
   paint();
 
@@ -2190,7 +2532,7 @@ function renderIssue() {
   if (matchMedia("(hover: hover) and (pointer: fine)").matches) $("car_code").focus();
 }
 
-async function submitRequest() {
+async function submitRequest(scheduled = false) {
   const code = $("car_code").value.trim();
   const note = $("note").value.trim();
   const msg = $("issueMsg");
@@ -2200,6 +2542,13 @@ async function submitRequest() {
   if (!code)        return fail("Enter the key tag.");
   if (!issueOrigin) return fail("Choose where the car is now.");
   if (!issueDest)   return fail("Choose where it needs to go.");
+
+  let when = null;
+  if (scheduled) {
+    when = scheduledWhen();
+    if (!when)              return fail("Enter a time, as an hour and minutes.");
+    if (when <= new Date()) return fail("That time has already passed. Pick a later one.");
+  }
 
   // An unrecognised first character is warned about, not blocked. A cashier
   // holding a real tag should never be stuck because the advisor list is stale;
@@ -2213,17 +2562,20 @@ async function submitRequest() {
       p_destination: issueDest,
       p_via_wash: issueWash,
       p_note: note || null,
+      p_scheduled_for: when ? when.toISOString() : null,
     }});
     const sentTo = zoneFor(issueOrigin, issueDest) === "510" ? "510" : "Lower Lot";
     await loadRequests();
     issueOrigin = null; issueDest = null; issueWash = false;
-    renderIssue();
-    $("issueMsg").innerHTML =
-      `<div class="msg ok">${esc(code.toUpperCase())} sent to the ${sentTo} porters.</div>`;
+    renderIssue(scheduled);
+    $("issueMsg").innerHTML = `<div class="msg ok">${esc(code.toUpperCase())} ${
+      when ? `booked for ${esc(clock(when.toISOString()))}, going to the ${sentTo} porters.`
+           : `sent to the ${sentTo} porters.`}</div>`;
   } catch (e) {
     msg.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
   } finally {
-    btn.disabled = false; btn.textContent = "Send to porters";
+    btn.disabled = false;
+    btn.textContent = scheduled ? "Schedule it" : "Send to porters";
   }
 }
 
@@ -2300,6 +2652,16 @@ function renderSettings() {
       ${row("notify_delivered", "My Car Delivered", "A car you requested has arrived")}
     </div>
 
+    <h3 class="setsub">Scheduled requests</h3>
+    <div class="perms" style="grid-template-columns:1fr">
+      ${row("notify_sched_lower", "Lower Lot Scheduled",
+            "A request for lower lot porters has been booked for later")}
+      ${row("notify_sched_510", "510 Scheduled",
+            "A request for 510 porters has been booked for later")}
+      ${row("notify_reminder", "My Scheduled Car Is Due",
+            "A scheduled car you claimed has reached its time")}
+    </div>
+
     <h3 class="setsub">Messages</h3>
     <div class="perms" style="grid-template-columns:1fr">
       ${choice("none", "None", "Never tell me about messages")}
@@ -2316,6 +2678,8 @@ function renderSettings() {
               "A car belonging to one of your customers (according to the key-tag) has arrived")}
         ${row("notify_advisor_messages", "Messages",
               "Somebody has written about a car belonging to one of your customers")}
+        ${row("notify_advisor_scheduled", "Scheduled",
+              "A car belonging to one of your customers has been booked for later")}
       </div>` : ""}
 
     <div id="prefMsg"></div>
@@ -2339,6 +2703,10 @@ function renderSettings() {
         p_messages: wanted.notify_messages,
         p_advisor_delivered: !!wanted.notify_advisor_delivered,
         p_advisor_messages:  !!wanted.notify_advisor_messages,
+        p_sched_510:   !!wanted.notify_sched_510,
+        p_sched_lower: !!wanted.notify_sched_lower,
+        p_reminder:    !!wanted.notify_reminder,
+        p_advisor_scheduled: !!wanted.notify_advisor_scheduled,
       }});
       Object.assign(session.user, wanted);
       saveSession();
@@ -3119,7 +3487,14 @@ function renderDetail(message = "") {
   const sameDay = r.completed_at && new Date(r.completed_at).getTime() >= dayStart();
   const actions = [];
 
-  if (r.status === "unclaimed") {
+  if (r.status === "scheduled") {
+    // Claimable early — that is the whole point of showing it — but never
+    // deliverable, because the car is not wanted yet.
+    if (!r.claimed_by && canClaim()) actions.push(["claim", "Claim this one early", "primary"]);
+    if (mine) actions.push(["unclaim", "Release it — I claimed this by mistake", "danger"]);
+    else if (isManager() && r.claimed_by) actions.push(["unclaim", "Release it (manager)", "danger"]);
+    if (isManager() || canIssue()) actions.push(["cancel", "Cancel request", "danger"]);
+  } else if (r.status === "unclaimed") {
     if (canClaim()) actions.push(["claim", "Claim this car", "primary"]);
     // Any cashier, not only the one who raised it. Mirrors cancel_request() in
     // db/schema.sql, which is the authority — this only decides what to draw.
@@ -3166,7 +3541,9 @@ function renderDetail(message = "") {
 
     <div class="dsect">
       <dl>
-        <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
+          ${r.scheduled_for ? `<div class="kv"><dt>Scheduled for</dt>
+          <dd>${esc(dayAndClock(r.scheduled_for))} · ${esc(untilLabel(r.scheduled_for))}</dd></div>` : ""}
+      <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
         <div class="kv"><dt>Requested</dt><dd>${esc(dayAndClock(r.created_at))} · ${esc(ago(r.created_at))}</dd></div>
         ${r.claimed_at ? `<div class="kv"><dt>Claimed by</dt><dd>${esc(r.claimer?.name || "—")} at ${esc(clock(r.claimed_at))}</dd></div>` : ""}
         ${r.completed_at ? `<div class="kv"><dt>Delivered</dt><dd>${esc(clock(r.completed_at))} · took ${esc(minutesTaken(r))}</dd></div>` : ""}
@@ -3237,7 +3614,13 @@ async function act(action, r) {
       if (sheetInline) { tab = "queue"; render(); } else closeSheet();
       return;
     }
-    if (action === "claim") { tab = "queue"; closeSheet(); return; }
+    if (action === "claim") {
+      // Claiming a booking leaves you where you were — it is not on the queue
+      // yet, and jumping to the queue would show a car that is not there.
+      if (r.status !== "scheduled") tab = "queue";
+      closeSheet();
+      return;
+    }
     if (action === "unclaim") {
       if (sheetInline) { tab = "queue"; render(); } else closeSheet();
       return;
