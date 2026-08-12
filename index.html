@@ -615,6 +615,8 @@ textarea { min-height: 84px; resize: vertical; }
    This carries a cashier talking to a porter, which should not. */
 .msg.note { background: #1a2029; color: var(--text); font-size: 1rem; }
 
+#hSearch { margin-bottom: 10px; text-transform: uppercase; }
+#hSearch::placeholder { text-transform: none; }
 .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
 /* 1rem, not .88 — see the note on the base rule. Tapping a filter zoomed the
    page in and left it there. */
@@ -918,8 +920,12 @@ const TAG_BAD  = { name: "Unknown", color: "#ef4444" };
 
 function advisorForCode(code) {
   const c = String(code || "").trim().toUpperCase();
-  if (c.length <= 3) return TAG_NONE;
-  if (c[0] === "T")  return TAG_TOW;
+  // Mirrors the tag_type expression in db/schema.sql, which is the authority.
+  // This copy only draws the preview while a cashier is typing; if the two ever
+  // disagree, the card would change the moment the request was sent.
+  if (c.length === 3) return TAG_TOW;
+  if (c.length < 3)   return TAG_NONE;
+  if (c[0] === "T")   return TAG_TOW;
   return advisors.find(a => a.key_char === c[0]) || TAG_BAD;
 }
 
@@ -984,6 +990,12 @@ function ago(iso) {
 function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
+
+/* "8:58 PM · 44m ago".
+   Both, because both get asked at once: the clock time is what you compare
+   against a watch or against what somebody just said on the phone, and the
+   elapsed time is what tells you whether a car has been sitting too long. */
+const stamp = (iso) => `${clock(iso)} · ${ago(iso)}`;
 
 function dayAndClock(iso) {
   const d = new Date(iso);
@@ -1553,7 +1565,7 @@ function card(r, opts = {}) {
       <div class="row1">
         <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
         ${n ? `<span class="msgcount">${n} message${n > 1 ? "s" : ""}</span>` : ""}
-        <span class="age">${esc(opts.time || ago(r.created_at))}</span>
+        <span class="age">${esc(opts.time || stamp(r.created_at))}</span>
       </div>
       <div class="mid">
         <div class="code">${esc(r.car_code)}</div>
@@ -1645,7 +1657,7 @@ function myCarPanels(mine) {
       <div class="mycar" data-detail="${r.id}" style="--advisor:${esc(adv.color)}">
         <div class="top1">
           <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
-          <span class="age">claimed ${esc(ago(r.claimed_at))}</span>
+          <span class="age">claimed ${esc(stamp(r.claimed_at))}</span>
         </div>
         <div class="mid">
           <div class="code">${esc(r.car_code)}</div>
@@ -1931,7 +1943,7 @@ function render() {
       (splitByArea ? zoneBar(counts) : "") +
       (live.length
         ? `<p class="sub">${live.length} being delivered right now.</p>` +
-          live.map(r => swipeWrap(card(r, { time: "claimed " + ago(r.claimed_at) }),
+          live.map(r => swipeWrap(card(r, { time: "claimed " + stamp(r.claimed_at) }),
                                   null, null)).join("")
         : empty("◷", splitByArea
             ? "Nothing in progress in this area"
@@ -2183,7 +2195,7 @@ function renderSettings() {
 }
 
 /* --- History ------------------------------------------------------------- */
-let hFilters = { advisor: "", cashier: "", porter: "", order: "desc" };
+let hFilters = { code: "", advisor: "", cashier: "", porter: "", order: "desc" };
 
 function renderHistory() {
   const done = requests.filter(r => r.status === "complete" || r.status === "cancelled");
@@ -2191,7 +2203,12 @@ function renderHistory() {
   const names = (key) => [...new Map(done
     .filter(r => r[key]?.name).map(r => [r[key].name, r[key].name])).values()].sort();
 
+  // Substring, not prefix: people remember the end of a tag as often as the
+  // start. Codes are stored uppercase, so the needle is raised to match.
+  const needle = hFilters.code.trim().toUpperCase();
+
   let list = done.filter(r =>
+    (!needle || r.car_code.includes(needle)) &&
     (!hFilters.advisor || advisorOf(r).name === hFilters.advisor) &&
     (!hFilters.cashier || r.issuer?.name === hFilters.cashier) &&
     (!hFilters.porter  || r.claimer?.name === hFilters.porter));
@@ -2209,6 +2226,9 @@ function renderHistory() {
   $("view").innerHTML = `
     <h2 class="title">History</h2>
     <p class="sub">Finished requests from the last 7 days, most recently finished first.</p>
+    <input id="hSearch" type="text" inputmode="search" autocomplete="off"
+           placeholder="Search by key tag" value="${esc(hFilters.code)}"
+           aria-label="Search by key tag">
     <div class="filters">
       ${sel("fAdvisor", "All advisors", "advisor", names("advisor"))}
       ${sel("fCashier", "All cashiers", "cashier", names("issuer"))}
@@ -2226,6 +2246,19 @@ function renderHistory() {
             : `Delivered by ${r.claimer?.name || "—"} · ${minutesTaken(r)}`,
         })).join("")
       : empty("⟲", "Nothing matches", "Try clearing the filters."));
+
+  // Re-rendering on every keystroke destroys the box being typed into, so put
+  // the caret back exactly where it was — not at the end, or editing the middle
+  // of a tag would throw you to the end after each character.
+  const box = $("hSearch");
+  box.oninput = (e) => {
+    const at = e.target.selectionStart;
+    hFilters.code = e.target.value;
+    renderHistory();
+    const again = $("hSearch");
+    again.focus();
+    again.setSelectionRange(at, at);
+  };
 
   const bind = (id, key) => $(id).onchange = (e) => {
     hFilters[key] = e.target.value; renderHistory();

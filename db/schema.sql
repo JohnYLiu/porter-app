@@ -254,9 +254,15 @@ create table if not exists public.requests (
   -- No upper() here: car_code is uppercased on the way in by create_request and
   -- edit_request, which are the only paths that write it.
   tag_type text generated always as (
-    case when length(trim(car_code)) <= 3        then 'none'
-         when left(trim(car_code), 1) = 'T'      then 'tow_in'
-         else                                         'advisor' end
+    -- A three-character tag is a tow-in. Those tags are printed as a bare
+    -- number and never carry an advisor character, so there is nothing to
+    -- derive from them — but they are not UNKNOWN either, which is what they
+    -- used to read as. Shorter than three is still nothing: one or two
+    -- characters is a mistyped tag, not a kind of job.
+    case when length(trim(car_code)) = 3    then 'tow_in'
+         when length(trim(car_code)) < 3    then 'none'
+         when left(trim(car_code), 1) = 'T' then 'tow_in'
+         else                                    'advisor' end
   ) stored,
 
   -- Guard rails so a bug cannot leave a row in a nonsensical shape.
@@ -509,9 +515,19 @@ end $$;
 alter table public.push_subscriptions add column if not exists p256dh text;
 alter table public.push_subscriptions add column if not exists auth   text;
 
-alter table public.requests add column if not exists tag_type text
+-- Replaced rather than added, because the rule changed and a generated column
+-- cannot be altered in place. Dropping one loses nothing: every value in it is
+-- derived from car_code and is recomputed for every row on the way back in.
+alter table public.requests drop column if exists tag_type;
+alter table public.requests add  column tag_type text
   generated always as (
-    case when length(trim(car_code)) <= 3   then 'none'
+    -- A three-character tag is a tow-in. Those tags are printed as a bare
+    -- number and never carry an advisor character, so there is nothing to
+    -- derive from them — but they are not UNKNOWN either, which is what they
+    -- used to read as. Shorter than three is still nothing: one or two
+    -- characters is a mistyped tag, not a kind of job.
+    case when length(trim(car_code)) = 3    then 'tow_in'
+         when length(trim(car_code)) < 3    then 'none'
          when left(trim(car_code), 1) = 'T' then 'tow_in'
          else                                    'advisor' end
   ) stored;
