@@ -111,6 +111,37 @@ body { overscroll-behavior-y: contain; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; border: none; background: none; }
 
+/* --- The menu ---------------------------------------------------------------
+   Slides in from the right over everything, including the tab bar. */
+#menuBtn {
+  width: 44px; padding: 0; font-size: 1.3rem; line-height: 1;
+  /* U+2630 has no colour form to fall into, unlike the gear it replaces, but
+     ask for the text glyph anyway — it costs nothing and the tab bar learned
+     this lesson the hard way. */
+  font-variant-emoji: text;
+}
+
+#menu { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.55); }
+#menu[hidden] { display: none; }
+.menupanel {
+  position: absolute; top: 0; right: 0; height: 100%;
+  width: min(300px, 78vw);
+  background: var(--surface); border-left: 1px solid var(--line);
+  padding: calc(env(safe-area-inset-top) + 18px) 14px calc(18px + var(--safe-bottom));
+  display: flex; flex-direction: column; gap: 8px;
+  animation: slidein .18s ease-out;
+}
+@keyframes slidein { from { transform: translateX(100%); } }
+
+.menupanel button {
+  display: block; width: 100%; text-align: left;
+  min-height: 54px; padding: 0 16px; border-radius: 11px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--text); font-size: 1rem; font-weight: 600;
+}
+.menupanel button.danger { color: var(--danger); }
+.menupanel button[hidden] { display: none; }
+
 /* --- Login ---------------------------------------------------------------- */
 #login {
   min-height: 100%;
@@ -811,11 +842,21 @@ dl { margin: 0; }
 <div id="app" hidden>
   <header>
     <div class="who"><b id="whoName"></b><span id="whoRole"></span></div>
-    <button id="adminBtn" hidden>Admin</button>
-    <button id="signOutBtn">Sign out</button>
+    <button id="menuBtn" aria-label="Menu" aria-haspopup="true">&#9776;</button>
   </header>
   <main id="view"></main>
   <nav id="tabs"></nav>
+</div>
+
+<!-- Slides in from the right. Everything that is about YOU rather than about a
+     car lives here: it is opened rarely, and the space it used to take in the
+     header and the tab bar is worth more to the things opened constantly. -->
+<div id="menu" hidden>
+  <div class="menupanel" role="menu">
+    <button data-menu="settings" role="menuitem">Settings</button>
+    <button data-menu="admin" role="menuitem" hidden>Admin</button>
+    <button data-menu="signout" role="menuitem" class="danger">Sign out</button>
+  </div>
 </div>
 
 <div class="offline" id="offline" hidden>No connection — showing the last known queue</div>
@@ -1521,7 +1562,8 @@ function tabsFor() {
   t.push({ id: "progress", label: "Active", ico: "◷" });
   if (canIssue()) t.push({ id: "issue", label: "Issue", ico: "＋" });
   t.push({ id: "history", label: "History", ico: "⟲" });
-  t.push({ id: "settings", label: "Settings", ico: "\u2699\uFE0E" });
+  // Settings is not here any more — it lives in the menu, with the other things
+  // you touch once a week rather than once a minute.
   return t;
 }
 
@@ -1529,7 +1571,11 @@ function renderTabs() {
   const list = tabsFor();
   // "admin" is reached from the header, not the tab bar, so it is legitimately
   // absent from this list — don't bounce back to the queue when it is showing.
-  if (tab !== "admin" && !list.some(t => t.id === tab)) tab = list[0].id;
+  // Admin and Settings are reached from the menu, not the bar, so they are
+  // legitimately absent from this list — don't bounce back to the queue while
+  // one of them is showing.
+  const offBar = tab === "admin" || tab === "settings";
+  if (!offBar && !list.some(t => t.id === tab)) tab = list[0].id;
 
   // The queue badge counts every area this person can see, not just the sub-tab
   // they happen to be looking at — otherwise a cashier on the 510 tab would see
@@ -1941,7 +1987,7 @@ function renderWho() {
   if (!session?.user) return;
   $("whoName").textContent = session.user.name;
   $("whoRole").textContent = roleLabel(session.user);
-  $("adminBtn").hidden = !session.user.is_admin;
+
 }
 
 function render() {
@@ -3332,8 +3378,25 @@ $("code").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); }
 $("code").addEventListener("input", e => {
   e.target.value = e.target.value.replace(/\D/g, "").slice(0, 8);
 });
-$("signOutBtn").onclick = () => signOut();
-$("adminBtn").onclick = () => { tab = "admin"; render(); };
+function openMenu() {
+  $("menu").querySelector('[data-menu="admin"]').hidden = !session?.user?.is_admin;
+  $("menu").hidden = false;
+}
+function closeMenu() { $("menu").hidden = true; }
+
+$("menuBtn").onclick = openMenu;
+// Anywhere off the panel closes it, which on a phone is the whole screen to
+// the left of it.
+$("menu").onclick = (e) => { if (e.target.id === "menu") closeMenu(); };
+addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+
+$("menu").querySelectorAll("[data-menu]").forEach(b =>
+  b.onclick = () => {
+    closeMenu();
+    if (b.dataset.menu === "signout") { signOut(); return; }
+    tab = b.dataset.menu;
+    render();
+  });
 $("sheet").onclick = (e) => { if (e.target.id === "sheet") closeSheet(); };
 // Stamped on real interaction, not on focus alone — focus persists long after a
 // dropdown has closed, and that persistence is exactly what froze the History
