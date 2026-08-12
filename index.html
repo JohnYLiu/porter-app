@@ -319,6 +319,19 @@ nav.herobar .hero[data-tab="issue"] .disc { top:  -9px; }
 nav.herobar .hero[aria-current="true"] { background: none; }
 nav.herobar .hero[aria-current="true"]::before { border-color: var(--dim); }
 
+/* A head in the bump instead of a plus.
+   No label, which is what buys the room for the hair to hang below the bar's
+   edge — the button is unmistakable without one. Not clipped to the dome on
+   purpose: the hair spilling past it is the joke. */
+nav.herobar .hero .facepic {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  /* Sized so the head fills the half-circle and the hair lands level with the
+     bottom of the bar. On a phone with a home indicator the bar is taller, so
+     the hair finishes just above it rather than running off the screen. */
+  top: -54px; width: 88px; height: auto;
+  pointer-events: none;
+}
+
 /* The count belongs up in the bump, not trailing the word. It is measured from
    the hero, which means it has to sit OUTSIDE .disc — an absolute child of the
    glyph's box measures from the glyph and follows it around, which threw the
@@ -1720,15 +1733,21 @@ const heroTab = () => porterBar() ? "queue" : "issue";
    one or two tabs beside it. */
 function heroTabs(list, waiting, heroId) {
   const hero  = list.find(t => t.id === heroId);
+  // Only the cashier's Issue button. The porters' Queue keeps its glyph and its
+  // count — a face with a number pinned to its ear is not a queue badge.
+  const face  = faceHero && heroId === "issue";
   const right = list.filter(t => t.id === "schedule" || t.id === "history");
   const left  = list.filter(t => t.id !== heroId && !right.includes(t));
 
   return `<div class="side">${left.map(t => tabBtn(t, waiting)).join("")}</div>` +
     (hero ? `
-      <button class="hero" data-tab="${hero.id}" aria-current="${hero.id === tab}">
-        <span class="disc"><span class="ico">${hero.ico}</span></span>
+      <button class="hero${face ? " faced" : ""}" data-tab="${hero.id}"
+              aria-label="${esc(hero.label)}" aria-current="${hero.id === tab}">
+        ${face
+          ? `<img class="facepic" src="hero-face.png" alt="">`
+          : `<span class="disc"><span class="ico">${hero.ico}</span></span>`}
         ${hero.id === "queue" && waiting ? `<span class="badge">${waiting}</span>` : ""}
-        <span class="lbl">${esc(hero.label)}</span>
+        ${face ? "" : `<span class="lbl">${esc(hero.label)}</span>`}
       </button>` : "") +
     `<div class="side">${right.map(t => tabBtn(t, waiting)).join("")}</div>`;
 }
@@ -2200,6 +2219,11 @@ function locButtons(kind, selected) {
    Two things a cashier does with bookings: make one, and check the ones they
    already made. */
 let schedSub = "new";
+
+/* Purely cosmetic, so it lives on the device rather than on the account: it is
+   a choice about this phone's tab bar, not a fact about the person. */
+const FACE_KEY = "porter.faceHero";
+let faceHero = localStorage.getItem(FACE_KEY) === "1";
 
 /* The two sub-tabs, built here and used by both branches — including by
    renderIssue, which draws the whole New Request screen on its own. They were
@@ -2674,6 +2698,15 @@ function renderSettings() {
             "A scheduled car you claimed has reached its time")}
     </div>
 
+    <h3 class="setsub">Appearance</h3>
+    <div class="perms" style="grid-template-columns:1fr">
+      <label class="perm ${faceHero ? "on" : ""}" style="min-height:56px">
+        <input type="checkbox" id="faceHero" ${faceHero ? "checked" : ""}>
+        <span>John on the Issue button${note(
+          "Replaces the + in the middle of the bar. This phone only.")}</span>
+      </label>
+    </div>
+
     <h3 class="setsub">Messages</h3>
     <div class="perms" style="grid-template-columns:1fr">
       ${choice("none", "None", "Never tell me about messages")}
@@ -2734,6 +2767,14 @@ function renderSettings() {
   };
 
   $("view").querySelectorAll("[data-pref], [data-msg]").forEach(c => c.onchange = save);
+
+  // Not part of the notification set — it is a device setting, saved on the
+  // spot and reflected in the bar immediately.
+  $("faceHero").onchange = (e) => {
+    faceHero = e.target.checked;
+    localStorage.setItem(FACE_KEY, faceHero ? "1" : "0");
+    render();
+  };
 }
 
 /* --- History ------------------------------------------------------------- */
