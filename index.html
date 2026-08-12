@@ -325,10 +325,11 @@ nav.herobar .hero[aria-current="true"]::before { border-color: var(--dim); }
    purpose: the hair spilling past it is the joke. */
 nav.herobar .hero .facepic {
   position: absolute; left: 50%; transform: translateX(-50%);
-  /* Sized so the head fills the half-circle and the hair lands level with the
-     bottom of the bar. On a phone with a home indicator the bar is taller, so
-     the hair finishes just above it rather than running off the screen. */
-  top: -54px; width: 88px; height: auto;
+  /* The dome runs from -52 to -7 here, so -44 leaves the top of the hair
+     clear of the arc rather than pressed against it. Narrow enough that the
+     head sits inside the circle with room around it, and the hair still falls
+     past the bar's edge into the space the label used to take. */
+  top: -44px; width: 78px; height: auto;
   pointer-events: none;
 }
 
@@ -2633,6 +2634,7 @@ function viewportReadout() {
   const app = $("app").getBoundingClientRect();
   const n = v => Math.round(v);
   return [
+    swVersion || "worker unknown",
     `win ${n(innerWidth)}x${n(innerHeight)}`,
     `scr ${n(screen.width)}x${n(screen.height)}`,
     `vv ${vv ? n(vv.height) + "@" + n(vv.offsetTop) : "-"}`,
@@ -2702,7 +2704,7 @@ function renderSettings() {
     <div class="perms" style="grid-template-columns:1fr">
       <label class="perm ${faceHero ? "on" : ""}" style="min-height:56px">
         <input type="checkbox" id="faceHero" ${faceHero ? "checked" : ""}>
-        <span>John on the Issue button${note(
+        <span>A special version of the Issue button${note(
           "Replaces the + in the middle of the bar. This phone only.")}</span>
       </label>
     </div>
@@ -3459,6 +3461,7 @@ async function adminCall(payload) {
 =========================================================================== */
 let sheetId = null;
 let msgDraft = "";       // what is half-typed into the open sheet
+let swVersion = null;    // which build this device is actually running
 let sheetInline = false;
 
 /* A request's detail is shown one of two ways: as a modal sheet over a list,
@@ -3936,6 +3939,11 @@ window.addEventListener("focus", onForeground);
 // that stays blank after tapping one, the tap is not reaching the worker at all
 // and nothing on the app side could have helped.
 serviceWorkerVersion().then(async (v) => {
+  // Kept so Settings can show it too. "Which version is this phone on" comes up
+  // every time something works on a computer and not on a phone, and until now
+  // the only place it was written down was the sign-in screen — which you have
+  // to sign out to reach.
+  swVersion = v;
   let tapped = "";
   try {
     const hit = await (await caches.open("porter-intent")).match("/__last-click");

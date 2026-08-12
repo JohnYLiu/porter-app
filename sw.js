@@ -24,7 +24,7 @@
  * Screen never reloads and keeps running the old code indefinitely. Editing
  * this line is what makes the update mechanism in index.html fire at all.
  */
-const CACHE = "porter-v79";
+const CACHE = "porter-v80";
 
 /* Kept separate from CACHE, and NOT cleared on activate. It holds one flag:
    "a notification was tapped, show the queue". A service worker cannot reach
@@ -32,9 +32,21 @@ const CACHE = "porter-v79";
    iOS it often cannot. This survives both. */
 const INTENT = "porter-intent";
 
-const SHELL = [
+/* Without these two the app cannot open at all, so if they cannot be fetched
+   the install SHOULD fail and leave the working old worker in charge. */
+const CORE = [
   "./",
   "./index.html",
+];
+
+/* Everything else is decoration, or metadata the browser only wants at install
+   time. Cached best-effort, deliberately.
+   addAll rejects the whole batch if a single entry fails, and a rejected
+   install means the new worker never activates — so one picture that did not
+   download, on a phone with one bar of signal in a service bay, would stop
+   every future update reaching that phone. Silently, and for good: nothing
+   retries and nothing reports it. That is far too much to risk on an image. */
+const EXTRAS = [
   "./logo.png",
   "./icon-192.png",
   "./icon-512.png",
@@ -44,7 +56,12 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    await c.addAll(CORE);
+    await Promise.allSettled(EXTRAS.map(u => c.add(u)));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (e) => {
