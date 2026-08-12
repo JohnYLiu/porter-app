@@ -2174,6 +2174,20 @@ function renderIssue() {
   $("submitReq").onclick = submitRequest;
 
   paint();
+
+  // Straight into the key tag, so issuing a car is type-and-go rather than
+  // click, then type.
+  //
+  // Mouse only, and the test is the POINTER rather than the screen width: what
+  // makes this wrong on a phone is not the size of the screen, it is the
+  // keyboard that would spring up over the form the moment the tab opened,
+  // covering the very buttons the cashier needs next. A narrow window on a
+  // laptop should still land in the box; a large tablet should not.
+  //
+  // Runs on the two occasions this form is drawn — opening the tab, and after a
+  // request is sent — and both are moments when the next thing anyone does is
+  // type a tag.
+  if (matchMedia("(hover: hover) and (pointer: fine)").matches) $("car_code").focus();
 }
 
 async function submitRequest() {
