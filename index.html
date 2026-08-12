@@ -666,9 +666,25 @@ textarea { min-height: 84px; resize: vertical; }
                font-size: 2.3rem; font-weight: 650; letter-spacing: .05em; }
 .kv { display: flex; justify-content: space-between; gap: 16px;
       padding: 11px 0; border-bottom: 1px solid var(--line); font-size: .92rem; }
+/* The section rule below already closes the list off. Two lines together read
+   as a mistake. */
+.kv:last-child { border-bottom: none; padding-bottom: 0; }
 .kv dt { color: var(--dimmer); flex: none; }
 .kv dd { margin: 0; text-align: right; }
-dl { margin: 16px 0 22px; }
+dl { margin: 0; }
+
+/* The sheet is four different things stacked up: what the car is and what
+   somebody wrote about it, the conversation, the record of who did what, and
+   what you can do next. Run together they read as one long column and the eye
+   has to go through every line to find the one it came for.
+   A rule and some air between them, rather than boxes — the note, the messages
+   and the buttons are all boxed already, and boxing the groups too would add
+   weight to a screen that has too much of it. */
+.dsect { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+/* The section already sets the gap under its rule. A child bringing its own
+   top margin doubles it, which is what put a chasm between the divider and the
+   message box. */
+.dsect > :first-child { margin-top: 0; }
 
 .status-pill {
   display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .1em;
@@ -2991,25 +3007,33 @@ function renderDetail(message = "") {
       <span class="chip"><span class="dot"></span>${esc(adv.name)}</span>
     </div>
     ${r.note ? `<div class="msg note" style="margin-top:14px">${esc(r.note)}</div>` : ""}
-    <div class="compose">
-      <textarea id="msgBox" rows="2" maxlength="1000"
-                placeholder="Message the others about this car"></textarea>
-      <button class="btn primary" id="msgSend">Send</button>
-      <div id="msgErr"></div>
+
+    <div class="dsect">
+      <div class="compose">
+        <textarea id="msgBox" rows="2" maxlength="1000"
+                  placeholder="Message the others about this car"></textarea>
+        <button class="btn primary" id="msgSend">Send</button>
+        <div id="msgErr"></div>
+      </div>
+      ${messageLog(msgs)}
     </div>
-    ${messageLog(msgs)}
-    <dl>
-      <div class="kv"><dt>Area</dt><dd>${r.zone === "510" ? "510" : "Lower Lot"}</dd></div>
-      <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
-      <div class="kv"><dt>Requested</dt><dd>${esc(dayAndClock(r.created_at))} · ${esc(ago(r.created_at))}</dd></div>
-      ${r.claimed_at ? `<div class="kv"><dt>Claimed by</dt><dd>${esc(r.claimer?.name || "—")} at ${esc(clock(r.claimed_at))}</dd></div>` : ""}
-      ${r.completed_at ? `<div class="kv"><dt>Delivered</dt><dd>${esc(clock(r.completed_at))} · took ${esc(minutesTaken(r))}</dd></div>` : ""}
-      ${r.cancelled_at ? `<div class="kv"><dt>Cancelled</dt><dd>${esc(clock(r.cancelled_at))}</dd></div>` : ""}
-    </dl>
-    <div id="sheetMsg">${message}</div>
-    ${actions.map(([a, label, cls]) =>
-       `<button class="btn ${cls}" data-act="${a}">${esc(label)}</button>`).join("")}
-    ${sheetInline ? "" : `<button class="btn" data-act="close" style="margin-top:18px">Close</button>`}`;
+
+    <div class="dsect">
+      <dl>
+        <div class="kv"><dt>Issued by</dt><dd>${esc(r.issuer?.name || "—")}</dd></div>
+        <div class="kv"><dt>Requested</dt><dd>${esc(dayAndClock(r.created_at))} · ${esc(ago(r.created_at))}</dd></div>
+        ${r.claimed_at ? `<div class="kv"><dt>Claimed by</dt><dd>${esc(r.claimer?.name || "—")} at ${esc(clock(r.claimed_at))}</dd></div>` : ""}
+        ${r.completed_at ? `<div class="kv"><dt>Delivered</dt><dd>${esc(clock(r.completed_at))} · took ${esc(minutesTaken(r))}</dd></div>` : ""}
+        ${r.cancelled_at ? `<div class="kv"><dt>Cancelled</dt><dd>${esc(clock(r.cancelled_at))}</dd></div>` : ""}
+      </dl>
+    </div>
+
+    <div class="dsect">
+      <div id="sheetMsg">${message}</div>
+      ${actions.map(([a, label, cls]) =>
+         `<button class="btn ${cls}" data-act="${a}">${esc(label)}</button>`).join("")}
+      ${sheetInline ? "" : `<button class="btn" data-act="close" style="margin-top:18px">Close</button>`}
+    </div>`;
 
   if (sheetInline) $("view").innerHTML = html;
   else $("sheetBody").innerHTML = html;
